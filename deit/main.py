@@ -24,9 +24,21 @@ from samplers import RASampler
 import models
 import utils
 
+import wandb
+import os
+
 
 def get_args_parser():
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
+    
+    # FISH++
+    parser.add_argument('--fish_h', default=0, type=int, help='whether to use fish++ h-matrix sparsity')
+    parser.add_argument('--fish_global_head', default=1, type=int, help='number of global head attention matrices')
+    parser.add_argument('--fish_h_level', default=2, type=int, help='number of h-matrix levels')
+    parser.add_argument('--exp_name', default='', type=str, help='name of the experiment, set to overwrite | leave blank to be set')
+    parser.add_argument('--wandb', default=1, type=int, help='wandb')
+    parser.add_argument('--metrics_only', default=0, type=int, help='whether to do a quick run for metrics and exit')
+    
     parser.add_argument('--batch-size', default=64, type=int)
     parser.add_argument('--epochs', default=300, type=int)
 
@@ -169,6 +181,72 @@ def get_args_parser():
 
 
 def main(args):
+    
+    # ADDED: parse and process args for fish++
+    time_stamp = time.strftime('%y%m%d_%H%M%S')
+    model_name_short = str(args.model).replace(
+        'deit_base', 'deitB').replace(
+        'deit_small', 'deitS').replace(
+        'deit_tiny', 'deitT').replace(
+        '_patch', '_p')
+    if args.fish_h:
+        _fish_type_str = f'fishpp_g{args.fish_global_head}_hl{args.fish_h_level}'
+        assert args.fish_global_head >= 1
+        assert args.fish_h_level >= 0
+    else:
+        _fish_type_str = f'baseline'
+    
+    if not args.exp_name:
+        args.exp_name = '_'.join([
+            time_stamp,
+            f'{model_name_short}',
+            _fish_type_str,
+            # f'fishpp',
+            # f'g{args.fish_global_head}',
+            # f'hl{args.fish_h_level}',
+            f'bs{args.batch_size}x{utils.get_world_size()}',
+        ])
+    
+    if args.output_dir:
+        # ALTER: changes 
+        args.output_dir = os.path.join(args.output_dir, args.exp_name)
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    
+    print(f'timestamp[{time_stamp}]')
+    print(f'exp[{args.exp_name}]')
+    print(f'bs[{args.batch_size}] x gpu[{utils.get_world_size()}]')
+    print(f'output_dir[{args.output_dir}]')
+    
+    if utils.is_main_process() and args.wandb:
+        _project = f'ImageNet_fishpp_deit'
+        wandb.init(
+            project=_project,
+            entity='fpt-team',
+            config={},
+            name=args.exp_name,
+        )
+        
+        # set all other train/ metrics to use this step
+        _step_metric = 'epoch'
+        wandb.define_metric(_step_metric)
+        wandb.define_metric("*", step_metric=_step_metric)
+        
+        wandb.define_metric("test_acc1", summary="max")
+        wandb.define_metric("test_acc5", summary="max")
+        wandb.define_metric("train_mem_gb", summary="max")
+        
+        wandb.run.summary['timestamp'] = time_stamp
+        wandb.run.summary['epoch'] = 0
+        wandb.run.summary['acc'] = 0.0
+        wandb.run.summary['acc5'] = 0.0
+        wandb.run.summary['type'] = _fish_type_str
+        wandb.run.summary['bs'] = args.batch_size
+        wandb.run.summary['gpu'] = utils.get_world_size()
+        # wandb.run.summary.update()
+        
+        wandb.config.update(args)
+        print(f"Initiated WandB project[{_project}] name[{args.exp_name}]")
+    
     utils.init_distributed_mode(args)
 
     print(args)
@@ -371,30 +449,24 @@ def main(args):
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
-
+        
+        _batch_limit = None
+        if args.metrics_only:
+            _batch_limit = 100
+        
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
             optimizer, device, epoch, loss_scaler,
             args.clip_grad, model_ema, mixup_fn,
-            set_training_mode=args.finetune == ''  # keep in eval mode during finetuning
+            set_training_mode=args.finetune == '',  # keep in eval mode during finetuning
+            batch_limit=_batch_limit,
         )
 
         lr_scheduler.step(epoch)
-        if args.output_dir:
-            checkpoint_paths = [output_dir / 'checkpoint.pth']
-            for checkpoint_path in checkpoint_paths:
-                utils.save_on_master({
-                    'model': model_without_ddp.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'model_ema': get_state_dict(model_ema),
-                    'scaler': loss_scaler.state_dict(),
-                    'args': args,
-                }, checkpoint_path)
-             
 
-        test_stats = evaluate(data_loader_val, model, device)
+        test_stats = evaluate(data_loader_val, model, device,
+            batch_limit=_batch_limit,
+        )
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         
         if max_accuracy < test_stats["acc1"]:
@@ -419,6 +491,38 @@ def main(args):
                      'epoch': epoch,
                      'n_parameters': n_parameters}
         
+        if utils.is_main_process() and args.wandb:
+            _mem_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
+            wandb_dict = {
+                'epoch': epoch,
+                **{f'train_{k}': v for k, v in train_stats.items()},
+                **{f'test_{k}': v for k, v in test_stats.items()},
+                'train_mem_gb': float(_mem_gb),
+            }
+            wandb.run.summary['epoch'] = epoch
+            wandb.run.summary['acc'] = float(test_stats['acc1'])
+            wandb.run.summary['acc5'] = float(test_stats['acc5'])
+            wandb.log(wandb_dict)
+            print(f'[WandB]: {wandb_dict}')
+        
+        if args.metrics_only:
+            assert 0, 'args.metrics_only==True -> Exiting early'
+        
+        # move model saving to after evaluation and logging
+        
+        if args.output_dir:
+            checkpoint_paths = [output_dir / 'checkpoint.pth']
+            for checkpoint_path in checkpoint_paths:
+                utils.save_on_master({
+                    'model': model_without_ddp.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'model_ema': get_state_dict(model_ema),
+                    'scaler': loss_scaler.state_dict(),
+                    'args': args,
+                }, checkpoint_path)
+             
         
         
         
@@ -434,6 +538,4 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('DeiT training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
-    if args.output_dir:
-        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)
