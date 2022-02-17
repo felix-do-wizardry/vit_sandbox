@@ -1,0 +1,8 @@
+*.swp
+**/__pycache__/**
+deit/imnet_resnet50_scratch/timm_temp/
+deit/.dumbo.json
+deit/checkpoints/
+deit/wandb/*
+deit/outputs/*
+plots/*
