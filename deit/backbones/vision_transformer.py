@@ -366,6 +366,7 @@ class VisionTransformer_FishPP(nn.Module):
                  global_heads=1,
                  mask_type='h',
                  mask_levels=3,
+                 **kwargs
                  ):
         """
         Args:
@@ -388,6 +389,7 @@ class VisionTransformer_FishPP(nn.Module):
             weight_init: (str): weight init scheme
         """
         super().__init__()
+        print('overflown kwargs:', kwargs)
         
         assert mask_levels >= 2
         self.mask_levels = mask_levels
@@ -525,7 +527,9 @@ class VisionTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=True, representation_size=None, distilled=False,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0., embed_layer=PatchEmbed, norm_layer=None,
-                 act_layer=None, weight_init=''):
+                 act_layer=None, weight_init='',
+                 **kwargs
+                 ):
         """
         Args:
             img_size (int, tuple): input image size
@@ -547,6 +551,7 @@ class VisionTransformer(nn.Module):
             weight_init: (str): weight init scheme
         """
         super().__init__()
+        print('overflown kwargs:', kwargs)
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.num_tokens = 2 if distilled else 1
