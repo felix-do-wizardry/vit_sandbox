@@ -213,11 +213,16 @@ def main(args):
         args.output_dir = os.path.join(args.output_dir, args.exp_name)
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     
+    utils.init_distributed_mode(args)
+    print(args)
+    
     print(f'timestamp[{time_stamp}]')
     print(f'exp[{args.exp_name}]')
     print(f'bs[{args.batch_size}] x gpu[{utils.get_world_size()}]')
     print(f'output_dir[{args.output_dir}]')
     
+    print(f'process rank: utils[{utils.get_rank()}] args[{args.rank}]')
+    # assert 0
     if utils.is_main_process() and args.wandb:
         _project = f'ImageNet_fishpp_deit'
         wandb.init(
@@ -248,10 +253,6 @@ def main(args):
         wandb.config.update(args)
         print(f"Initiated WandB project[{_project}] name[{args.exp_name}]")
     
-    utils.init_distributed_mode(args)
-
-    print(args)
-
     if args.distillation_type != 'none' and args.finetune and not args.eval:
         raise NotImplementedError("Finetuning with distillation not yet supported")
 

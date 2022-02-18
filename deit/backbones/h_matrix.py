@@ -51,9 +51,9 @@ class H_Matrix:
         cyf = cy.reshape(-1)
         cxf == cyf
         
-        match = np.zeros([n, n], dtype=int)
-        match_h = np.zeros([n, n], dtype=int)
-        dist = np.zeros([n, n], dtype=float)
+        match   = np.zeros([n + 1, n + 1], dtype=int) - 1
+        match_h = np.zeros([n + 1, n + 1], dtype=int) - 1
+        dist    = np.zeros([n + 1, n + 1], dtype=float)
         data = []
         for iq in range(n):
             pq = (int(iq // t), iq % t)
@@ -68,10 +68,13 @@ class H_Matrix:
                 _match_h = x_match * y_match + y_match
                 
                 assert _match in [0, 1, 2]
-                match[iq, ik] = _match
-                match_h[iq, ik] = _match_h
                 
-                dist[iq, ik] = _dist
+                # match[iq, ik] = _match
+                # match_h[iq, ik] = _match_h
+                # dist[iq, ik] = _dist
+                match[iq + 1, ik + 1] = _match
+                match_h[iq + 1, ik + 1] = _match_h
+                dist[iq + 1, ik + 1] = _dist
                 
                 # data.append({
                 #     'iq': iq,

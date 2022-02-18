@@ -234,6 +234,7 @@ class Attention_FishPP(nn.Module):
         assert self.num_heads % self.global_heads == 0
         
         head_dim = dim // num_heads
+        self.head_dim = head_dim
         self.scale = head_dim ** -0.5
         
         global_dim = int(head_dim) * self.global_heads
@@ -243,10 +244,9 @@ class Attention_FishPP(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
         
-        
         # self.pi = nn.Parameter(torch.ones(1, 1, self.mask_levels))
         self.level_mix = nn.Linear(self.mask_levels, self.num_heads // self.global_heads, bias=False)
-        torch.nn.init.constant_(self.level_mix, 1.0)
+        torch.nn.init.constant_(self.level_mix.weight, 1.0)
         
         hm = H_Matrix(
             t=self.token_grid_size,
@@ -261,13 +261,21 @@ class Attention_FishPP(nn.Module):
             raise NotImplementedError(f'`mask_type`[{self.mask_type}] has not been implemented')
         
         _shape = list(indexed_mask.shape)
-        assert len(_shape) == 2 and _shape[0] == _shape[1] == self.token_count, f'indexed_mask.shape=_shape'
+        assert (len(_shape) == 2 and _shape[0] == _shape[1] == self.token_count + 1
+            ), f'indexed_mask.shape={_shape} != token_count[{self.token_count}] + 1'
         
-        # [1, 1, Level, N, N] -> [1, 1, N, N, Level]
+        # [Level, N, N] -> [N, N, Level] -> [1, 1, N, N, Level]
         self.masks = torch.tensor(np.array([
-            (indexed_mask == i).astype(int)
+            indexed_mask == i
             for i in range(self.mask_levels)
-        ])[None, None], dtype=torch.int32, device='cuda').permute(0, 1, 3, 4, 2)
+        ]), dtype=torch.int32, device='cuda', requires_grad=False,
+        ).permute(1, 2, 0)[None, None]
+        
+        # [N, N] -> [N, N] -> [1, 1, N, N, 1]
+        self.mask_cls = torch.tensor(
+            indexed_mask == -1,
+            dtype=torch.int32, device='cuda', requires_grad=False,
+        )[None, None, :, :, None]
         
         # TODO: implement non-linear proj for local attention
         
@@ -275,13 +283,15 @@ class Attention_FishPP(nn.Module):
             print(f'<Attention> [FISH] heads[{global_heads}->{num_heads}]',
                 f'mask_type[{mask_type}]',
                 f'mask_levels[{mask_levels}]',
-                f'token_grid_size[{token_grid_size}]')
+                f'token_grid_size[{token_grid_size}]',
+            )
     
     def forward(self, x):
         B, N, C = x.shape
         # qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         
-        qkv = self.qkv(x).reshape(B, N, 3, self.global_heads, C // self.global_heads).permute(2, 0, 3, 1, 4)
+        qkv = self.qkv(x)
+        qkv = qkv.reshape(B, N, 3, self.global_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         
         q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
 
@@ -290,6 +300,7 @@ class Attention_FishPP(nn.Module):
         # FishPP:
         # masks [1, 1, N, N, Level] -> [1, 1, N, N, head_ratio]
         mask_weights = self.level_mix(self.masks)
+        mask_weights = mask_weights + self.mask_cls
         
         # attn [B, GH, N, N] x masks [1, 1, N, N, head_ratio] -> [B, GH, N, N, head_ratio]
         a = attn[..., None] * mask_weights
