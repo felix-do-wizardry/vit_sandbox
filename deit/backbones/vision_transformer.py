@@ -228,6 +228,8 @@ class Attention_FishPP(nn.Module):
         self.token_grid_size = token_grid_size
         self.token_count = self.token_grid_size * self.token_grid_size
         
+        assert mask_type in FISH_MASK_TYPES, f'{mask_type=} not in {FISH_MASK_TYPES}'
+        
         self.num_heads = num_heads
         assert self.num_heads % self.global_heads == 0
         
@@ -241,7 +243,6 @@ class Attention_FishPP(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
         
-        assert self.mask_type in FISH_MASK_TYPES, f'{mask_type=} not in {FISH_MASK_TYPES}'
         
         # self.pi = nn.Parameter(torch.ones(1, 1, self.mask_levels))
         self.level_mix = nn.Linear(self.mask_levels, self.num_heads // self.global_heads, bias=False)
@@ -251,17 +252,25 @@ class Attention_FishPP(nn.Module):
             t=self.token_grid_size,
             level=self.mask_levels - 1,
         )
-        # hm.match
-        # hm.match_h
+        
+        if self.mask_type in ['h']:
+            indexed_mask = hm.match_h
+        elif self.mask_type in ['hdist']:
+            indexed_mask = hm.match
+        else:
+            raise NotImplementedError(f'`mask_type`[{self.mask_type}] has not been implemented')
+        
+        _shape = list(indexed_mask.shape)
+        assert len(_shape) == 2 and _shape[0] == _shape[1] == self.token_count, f'indexed_mask.shape=_shape'
         
         # [1, 1, Level, N, N] -> [1, 1, N, N, Level]
         self.masks = torch.tensor(np.array([
-            (hm.match_h == i).astype(int)
+            (indexed_mask == i).astype(int)
             for i in range(self.mask_levels)
         ])[None, None], dtype=torch.int32, device='cuda').permute(0, 1, 3, 4, 2)
         
-        # self.match_h = torch.tensor(hm.match_h, dtype=torch.int32, device='cuda').reshape([1, 1, self.token_count, self.token_count])
-        # self.match = torch.tensor(hm.match, dtype=torch.int32, device='cuda').reshape([1, 1, self.token_count, self.token_count])
+        # TODO: implement non-linear proj for local attention
+        
         if DEBUG:
             print(f'<Attention> [FISH] heads[{global_heads}->{num_heads}] {mask_type=} {mask_levels=} {token_grid_size=}')
     
