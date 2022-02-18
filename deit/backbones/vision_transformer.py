@@ -442,7 +442,7 @@ class VisionTransformer_FishPP(nn.Module):
             indexed_mask == i
             for i in range(self.mask_levels)
         ]), dtype=torch.float32,
-            # device='cuda',
+            device='cuda',
             requires_grad=False,
         ).permute(1, 2, 0)[None, None]
         
@@ -450,7 +450,7 @@ class VisionTransformer_FishPP(nn.Module):
         mask_cls = torch.tensor(
             indexed_mask == -1,
             dtype=torch.float32,
-            # device='cuda',
+            device='cuda',
             requires_grad=False,
         )[None, None, :, :, None]
         
@@ -1124,88 +1124,88 @@ def vit_huge_patch14_224_in21k(pretrained=False, **kwargs):
     return model
 
 
-@register_model
-def deit_tiny_patch16_224(pretrained=False, **kwargs):
-    """ DeiT-tiny model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
-    ImageNet-1k weights from https://github.com/facebookresearch/deit.
-    """
-    model_kwargs = dict(patch_size=16, embed_dim=192, depth=12, num_heads=3, **kwargs)
-    model = _create_vision_transformer('deit_tiny_patch16_224', pretrained=pretrained, **model_kwargs)
-    return model
+# @register_model
+# def deit_tiny_patch16_224(pretrained=False, **kwargs):
+#     """ DeiT-tiny model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
+#     ImageNet-1k weights from https://github.com/facebookresearch/deit.
+#     """
+#     model_kwargs = dict(patch_size=16, embed_dim=192, depth=12, num_heads=3, **kwargs)
+#     model = _create_vision_transformer('deit_tiny_patch16_224', pretrained=pretrained, **model_kwargs)
+#     return model
 
 
-@register_model
-def deit_small_patch16_224(pretrained=False, **kwargs):
-    """ DeiT-small model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
-    ImageNet-1k weights from https://github.com/facebookresearch/deit.
-    """
-    model_kwargs = dict(patch_size=16, embed_dim=384, depth=12, num_heads=6, **kwargs)
-    model = _create_vision_transformer('deit_small_patch16_224', pretrained=pretrained, **model_kwargs)
-    return model
+# @register_model
+# def deit_small_patch16_224(pretrained=False, **kwargs):
+#     """ DeiT-small model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
+#     ImageNet-1k weights from https://github.com/facebookresearch/deit.
+#     """
+#     model_kwargs = dict(patch_size=16, embed_dim=384, depth=12, num_heads=6, **kwargs)
+#     model = _create_vision_transformer('deit_small_patch16_224', pretrained=pretrained, **model_kwargs)
+#     return model
 
 
-@register_model
-def deit_base_patch16_224(pretrained=False, **kwargs):
-    """ DeiT base model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
-    ImageNet-1k weights from https://github.com/facebookresearch/deit.
-    """
-    model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
-    model = _create_vision_transformer('deit_base_patch16_224', pretrained=pretrained, **model_kwargs)
-    return model
+# @register_model
+# def deit_base_patch16_224(pretrained=False, **kwargs):
+#     """ DeiT base model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
+#     ImageNet-1k weights from https://github.com/facebookresearch/deit.
+#     """
+#     model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
+#     model = _create_vision_transformer('deit_base_patch16_224', pretrained=pretrained, **model_kwargs)
+#     return model
 
 
-@register_model
-def deit_base_patch16_384(pretrained=False, **kwargs):
-    """ DeiT base model @ 384x384 from paper (https://arxiv.org/abs/2012.12877).
-    ImageNet-1k weights from https://github.com/facebookresearch/deit.
-    """
-    model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
-    model = _create_vision_transformer('deit_base_patch16_384', pretrained=pretrained, **model_kwargs)
-    return model
+# @register_model
+# def deit_base_patch16_384(pretrained=False, **kwargs):
+#     """ DeiT base model @ 384x384 from paper (https://arxiv.org/abs/2012.12877).
+#     ImageNet-1k weights from https://github.com/facebookresearch/deit.
+#     """
+#     model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
+#     model = _create_vision_transformer('deit_base_patch16_384', pretrained=pretrained, **model_kwargs)
+#     return model
 
 
-@register_model
-def deit_tiny_distilled_patch16_224(pretrained=False, **kwargs):
-    """ DeiT-tiny distilled model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
-    ImageNet-1k weights from https://github.com/facebookresearch/deit.
-    """
-    model_kwargs = dict(patch_size=16, embed_dim=192, depth=12, num_heads=3, **kwargs)
-    model = _create_vision_transformer(
-        'deit_tiny_distilled_patch16_224', pretrained=pretrained,  distilled=True, **model_kwargs)
-    return model
+# @register_model
+# def deit_tiny_distilled_patch16_224(pretrained=False, **kwargs):
+#     """ DeiT-tiny distilled model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
+#     ImageNet-1k weights from https://github.com/facebookresearch/deit.
+#     """
+#     model_kwargs = dict(patch_size=16, embed_dim=192, depth=12, num_heads=3, **kwargs)
+#     model = _create_vision_transformer(
+#         'deit_tiny_distilled_patch16_224', pretrained=pretrained,  distilled=True, **model_kwargs)
+#     return model
 
 
-@register_model
-def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
-    """ DeiT-small distilled model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
-    ImageNet-1k weights from https://github.com/facebookresearch/deit.
-    """
-    model_kwargs = dict(patch_size=16, embed_dim=384, depth=12, num_heads=6, **kwargs)
-    model = _create_vision_transformer(
-        'deit_small_distilled_patch16_224', pretrained=pretrained,  distilled=True, **model_kwargs)
-    return model
+# @register_model
+# def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
+#     """ DeiT-small distilled model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
+#     ImageNet-1k weights from https://github.com/facebookresearch/deit.
+#     """
+#     model_kwargs = dict(patch_size=16, embed_dim=384, depth=12, num_heads=6, **kwargs)
+#     model = _create_vision_transformer(
+#         'deit_small_distilled_patch16_224', pretrained=pretrained,  distilled=True, **model_kwargs)
+#     return model
 
 
-@register_model
-def deit_base_distilled_patch16_224(pretrained=False, **kwargs):
-    """ DeiT-base distilled model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
-    ImageNet-1k weights from https://github.com/facebookresearch/deit.
-    """
-    model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
-    model = _create_vision_transformer(
-        'deit_base_distilled_patch16_224', pretrained=pretrained,  distilled=True, **model_kwargs)
-    return model
+# @register_model
+# def deit_base_distilled_patch16_224(pretrained=False, **kwargs):
+#     """ DeiT-base distilled model @ 224x224 from paper (https://arxiv.org/abs/2012.12877).
+#     ImageNet-1k weights from https://github.com/facebookresearch/deit.
+#     """
+#     model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
+#     model = _create_vision_transformer(
+#         'deit_base_distilled_patch16_224', pretrained=pretrained,  distilled=True, **model_kwargs)
+#     return model
 
 
-@register_model
-def deit_base_distilled_patch16_384(pretrained=False, **kwargs):
-    """ DeiT-base distilled model @ 384x384 from paper (https://arxiv.org/abs/2012.12877).
-    ImageNet-1k weights from https://github.com/facebookresearch/deit.
-    """
-    model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
-    model = _create_vision_transformer(
-        'deit_base_distilled_patch16_384', pretrained=pretrained, distilled=True, **model_kwargs)
-    return model
+# @register_model
+# def deit_base_distilled_patch16_384(pretrained=False, **kwargs):
+#     """ DeiT-base distilled model @ 384x384 from paper (https://arxiv.org/abs/2012.12877).
+#     ImageNet-1k weights from https://github.com/facebookresearch/deit.
+#     """
+#     model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
+#     model = _create_vision_transformer(
+#         'deit_base_distilled_patch16_384', pretrained=pretrained, distilled=True, **model_kwargs)
+#     return model
 
 
 @register_model
