@@ -228,7 +228,7 @@ class Attention_FishPP(nn.Module):
         self.token_grid_size = token_grid_size
         self.token_count = self.token_grid_size * self.token_grid_size
         
-        assert mask_type in FISH_MASK_TYPES, f'{mask_type=} not in {FISH_MASK_TYPES}'
+        assert mask_type in FISH_MASK_TYPES, f'mask_type[{mask_type}] not in {FISH_MASK_TYPES}'
         
         self.num_heads = num_heads
         assert self.num_heads % self.global_heads == 0
@@ -272,7 +272,10 @@ class Attention_FishPP(nn.Module):
         # TODO: implement non-linear proj for local attention
         
         if DEBUG:
-            print(f'<Attention> [FISH] heads[{global_heads}->{num_heads}] {mask_type=} {mask_levels=} {token_grid_size=}')
+            print(f'<Attention> [FISH] heads[{global_heads}->{num_heads}]',
+                f'mask_type[{mask_type}]',
+                f'mask_levels[{mask_levels}]',
+                f'token_grid_size[{token_grid_size}]')
     
     def forward(self, x):
         B, N, C = x.shape
@@ -317,11 +320,11 @@ class Block(nn.Module):
         super().__init__()
         self.norm1 = norm_layer(dim)
         if fishpp:
-            self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
-        else:
             self.attn = Attention_FishPP(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop,
                 **kwargs,
             )
+        else:
+            self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -381,7 +384,7 @@ class VisionTransformer_FishPP(nn.Module):
         
         assert isinstance(global_heads, int) and global_heads >= 1
         self.global_heads = global_heads
-        assert mask_type in FISH_MASK_TYPES, f'{mask_type=} not in {FISH_MASK_TYPES}'
+        assert mask_type in FISH_MASK_TYPES, f'mask_type[{mask_type}] not in {FISH_MASK_TYPES}'
         self.mask_type = mask_type
         
         self.num_classes = num_classes

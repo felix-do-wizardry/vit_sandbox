@@ -65,8 +65,10 @@ class DistilledVisionTransformer(VisionTransformer):
 def get_deit_model(fishpp=False, **kwargs):
     # fishpp = kwargs.get('fishpp', False)
     if fishpp:
+        print('`models.get_deit_model` - using fishpp')
         model = VisionTransformer_FishPP(**kwargs)
     else:
+        print('`models.get_deit_model` - using base')
         model = VisionTransformer(**kwargs)
     # model.default_cfg = _cfg()
     return model
