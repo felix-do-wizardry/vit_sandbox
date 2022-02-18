@@ -196,7 +196,7 @@ class Attention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
         
         if DEBUG:
-            print(f'<Attention> [BASE] heads[{num_heads}] dim[{head_dim}]')
+            print(f'<Attention> [BASE] heads[{num_heads}] qkv[{dim}->{dim*3}]')
     
     def forward(self, x):
         B, N, C = x.shape
@@ -238,8 +238,11 @@ class Attention_FishPP(nn.Module):
         self.scale = head_dim ** -0.5
         
         global_dim = int(head_dim) * self.global_heads
+        self.global_dim = global_dim
+        self.total_heads = self.global_heads * 2 + self.num_heads
+        total_dim = self.head_dim * self.total_heads
         
-        self.qkv = nn.Linear(dim, global_dim * 3, bias=qkv_bias)
+        self.qkv = nn.Linear(dim, total_dim, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
@@ -284,17 +287,24 @@ class Attention_FishPP(nn.Module):
                 f'mask_type[{mask_type}]',
                 f'mask_levels[{mask_levels}]',
                 f'token_grid_size[{token_grid_size}]',
+                f'qkv[{dim}->{total_dim}]',
             )
     
     def forward(self, x):
         B, N, C = x.shape
         # qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         
+        # -> [B, N, 2*global_dim + dim]
         qkv = self.qkv(x)
-        qkv = qkv.reshape(B, N, 3, self.global_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         
-        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
-
+        # qkv = qkv.reshape(B, N, 3, self.global_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        # q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+        
+        qkv = qkv.reshape(B, N, self.total_heads, self.head_dim).permute(0, 2, 1, 3)
+        q = qkv[:, : self.global_heads]
+        k = qkv[:, self.global_heads : self.global_heads * 2]
+        v = qkv[:, self.global_heads * 2 : ]
+        
         attn = (q @ k.transpose(-2, -1)) * self.scale
         
         # FishPP:
