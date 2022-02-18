@@ -124,6 +124,7 @@ class MetricLogger(object):
         log_msg = [
             header,
             '[{0' + space_fmt + '}/{1}]',
+            'ett: {ett:.2f}m',
             'eta: {eta}',
             '{meters}',
             'time: {time}',
@@ -143,12 +144,14 @@ class MetricLogger(object):
                 if torch.cuda.is_available():
                     print(log_msg.format(
                         i, len(iterable), eta=eta_string,
+                        ett=iter_time.global_avg / 60,
                         meters=str(self),
                         time=str(iter_time), data=str(data_time),
                         memory=torch.cuda.max_memory_allocated() / MB))
                 else:
                     print(log_msg.format(
                         i, len(iterable), eta=eta_string,
+                        ett=iter_time.global_avg / 60,
                         meters=str(self),
                         time=str(iter_time), data=str(data_time)))
             i += 1
