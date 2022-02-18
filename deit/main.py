@@ -222,7 +222,7 @@ def main(args):
     print(f'output_dir[{args.output_dir}]')
     
     print(f'process rank: utils[{utils.get_rank()}] args[{args.rank}]')
-    # assert 0
+    
     if utils.is_main_process() and args.wandb:
         _project = f'ImageNet_fishpp_deit'
         wandb.init(
@@ -456,6 +456,7 @@ def main(args):
     max_accuracy = 0.0
     max_accuracy5 = 0.0
     for epoch in range(args.start_epoch, args.epochs):
+        start_time_epoch = time.time()
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
         
@@ -470,6 +471,7 @@ def main(args):
             set_training_mode=args.finetune == '',  # keep in eval mode during finetuning
             batch_limit=_batch_limit,
         )
+        elapsed_time_epoch_train = time.time() - start_time_epoch
 
         lr_scheduler.step(epoch)
 
@@ -477,6 +479,9 @@ def main(args):
             batch_limit=_batch_limit,
         )
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        
+        elapsed_time_epoch_test = time.time() - start_time_epoch - elapsed_time_epoch_train
+        elapsed_time = time.time() - start_time
         
         if max_accuracy5 < test_stats["acc5"]:
             max_accuracy5 = test_stats["acc5"]
@@ -500,6 +505,9 @@ def main(args):
                 **{f'train_{k}': v for k, v in train_stats.items()},
                 **{f'test_{k}': v for k, v in test_stats.items()},
                 'train_mem_gb': float(_mem_gb),
+                'train_time_h': elapsed_time_epoch_train / 3600,
+                'test_time_h': elapsed_time_epoch_test / 3600,
+                'elapsed_time_h': elapsed_time / 3600,
             }
             wandb.run.summary['epoch'] = epoch
             wandb.run.summary['acc'] = float(max_accuracy)
