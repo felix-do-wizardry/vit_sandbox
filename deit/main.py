@@ -32,9 +32,11 @@ def get_args_parser():
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
     
     # FISH++
-    parser.add_argument('--fish_h', default=0, type=int, help='whether to use fish++ h-matrix sparsity')
-    parser.add_argument('--fish_global_head', default=1, type=int, help='number of global head attention matrices')
-    parser.add_argument('--fish_h_level', default=2, type=int, help='number of h-matrix levels')
+    parser.add_argument('--fishpp', default=0, type=int, help='whether to use fish++ h-matrix sparsity')
+    parser.add_argument('--fish_global_heads', default=1, type=int, help='number of global head attention matrices')
+    parser.add_argument('--fish_mask_levels', default=2, type=int, help='number of h-matrix levels')
+    parser.add_argument('--fish_mask_type', default='h', type=str, help='type of mask, one of `h1d`, `h`, `hdist`, `dist`')
+    
     parser.add_argument('--exp_name', default='', type=str, help='name of the experiment, set to overwrite | leave blank to be set')
     parser.add_argument('--wandb', default=1, type=int, help='wandb')
     parser.add_argument('--metrics_only', default=0, type=int, help='whether to do a quick run for metrics and exit')
@@ -189,10 +191,12 @@ def main(args):
         'deit_small', 'deitS').replace(
         'deit_tiny', 'deitT').replace(
         '_patch', '_p')
-    if args.fish_h:
-        _fish_type_str = f'fishpp_g{args.fish_global_head}_hl{args.fish_h_level}'
-        assert args.fish_global_head >= 1
-        assert args.fish_h_level >= 0
+    if args.fishpp:
+        assert args.fish_global_heads >= 1
+        assert args.fish_mask_levels >= 0
+        assert args.fish_mask_type in ['h1d', 'h', 'hdist', 'dist']
+        _fish_type_str = f'fishpp_{args.fish_mask_type}_g{args.fish_global_heads}_hl{args.fish_mask_levels}'
+        
     else:
         _fish_type_str = f'baseline'
     
@@ -201,9 +205,6 @@ def main(args):
             time_stamp,
             f'{model_name_short}',
             _fish_type_str,
-            # f'fishpp',
-            # f'g{args.fish_global_head}',
-            # f'hl{args.fish_h_level}',
             f'bs{args.batch_size}x{utils.get_world_size()}',
         ])
     
@@ -323,6 +324,12 @@ def main(args):
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
         drop_block_rate=None,
+        
+        fishpp=args.fishpp,
+        global_heads=args.fish_global_heads,
+        mask_type=args.fish_mask_type,
+        mask_levels=args.fish_mask_levels,
+        
     )
 
     if args.finetune:
@@ -446,6 +453,7 @@ def main(args):
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
     max_accuracy = 0.0
+    max_accuracy5 = 0.0
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
@@ -469,21 +477,14 @@ def main(args):
         )
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         
+        if max_accuracy5 < test_stats["acc5"]:
+            max_accuracy5 = test_stats["acc5"]
+        
+        _new_best = False
         if max_accuracy < test_stats["acc1"]:
             max_accuracy = test_stats["acc1"]
-            if args.output_dir:
-                checkpoint_paths = [output_dir / 'best_checkpoint.pth']
-                for checkpoint_path in checkpoint_paths:
-                    utils.save_on_master({
-                        'model': model_without_ddp.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'lr_scheduler': lr_scheduler.state_dict(),
-                        'epoch': epoch,
-                        'model_ema': get_state_dict(model_ema),
-                        'scaler': loss_scaler.state_dict(),
-                        'args': args,
-                    }, checkpoint_path)
-            
+            _new_best = True
+        
         print(f'Max accuracy: {max_accuracy:.2f}%')
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
@@ -500,8 +501,8 @@ def main(args):
                 'train_mem_gb': float(_mem_gb),
             }
             wandb.run.summary['epoch'] = epoch
-            wandb.run.summary['acc'] = float(test_stats['acc1'])
-            wandb.run.summary['acc5'] = float(test_stats['acc5'])
+            wandb.run.summary['acc'] = float(max_accuracy)
+            wandb.run.summary['acc5'] = float(max_accuracy5)
             wandb.log(wandb_dict)
             print(f'[WandB]: {wandb_dict}')
         
@@ -522,9 +523,20 @@ def main(args):
                     'scaler': loss_scaler.state_dict(),
                     'args': args,
                 }, checkpoint_path)
-             
         
-        
+        if _new_best:
+            if args.output_dir:
+                checkpoint_paths = [output_dir / 'best_checkpoint.pth']
+                for checkpoint_path in checkpoint_paths:
+                    utils.save_on_master({
+                        'model': model_without_ddp.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'lr_scheduler': lr_scheduler.state_dict(),
+                        'epoch': epoch,
+                        'model_ema': get_state_dict(model_ema),
+                        'scaler': loss_scaler.state_dict(),
+                        'args': args,
+                    }, checkpoint_path)
         
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:

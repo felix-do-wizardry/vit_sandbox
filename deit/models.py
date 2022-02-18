@@ -8,7 +8,8 @@ from functools import partial
 from timm.models.registry import register_model
 from timm.models.layers import trunc_normal_
 
-from models.vision_transformer import VisionTransformer, _cfg
+from backbones.vision_transformer import VisionTransformer, VisionTransformer_FishPP, _cfg
+# from backbones.vision_transformer import _cfg
 
 
 __all__ = [
@@ -17,8 +18,7 @@ __all__ = [
     'deit_base_distilled_patch16_224', 'deit_base_patch16_384',
     'deit_base_distilled_patch16_384',
 ]
-
-
+# %%
 class DistilledVisionTransformer(VisionTransformer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -61,9 +61,21 @@ class DistilledVisionTransformer(VisionTransformer):
             return (x + x_dist) / 2
 
 
+# %%
+def get_deit_model(fishpp=False, **kwargs):
+    # fishpp = kwargs.get('fishpp', False)
+    if fishpp:
+        model = VisionTransformer_FishPP(**kwargs)
+    else:
+        model = VisionTransformer(**kwargs)
+    # model.default_cfg = _cfg()
+    return model
+
+
+# %%
 @register_model
 def deit_tiny_patch16_224(pretrained=False, **kwargs):
-    model = VisionTransformer(
+    model = get_deit_model(
         patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     model.default_cfg = _cfg()
@@ -78,7 +90,7 @@ def deit_tiny_patch16_224(pretrained=False, **kwargs):
 
 @register_model
 def deit_small_patch16_224(pretrained=False, **kwargs):
-    model = VisionTransformer(
+    model = get_deit_model(
         patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     model.default_cfg = _cfg()
@@ -93,7 +105,7 @@ def deit_small_patch16_224(pretrained=False, **kwargs):
 
 @register_model
 def deit_base_patch16_224(pretrained=False, **kwargs):
-    model = VisionTransformer(
+    model = get_deit_model(
         patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     model.default_cfg = _cfg()
@@ -106,54 +118,54 @@ def deit_base_patch16_224(pretrained=False, **kwargs):
     return model
 
 
-@register_model
-def deit_tiny_distilled_patch16_224(pretrained=False, **kwargs):
-    model = DistilledVisionTransformer(
-        patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    model.default_cfg = _cfg()
-    if pretrained:
-        checkpoint = torch.hub.load_state_dict_from_url(
-            url="https://dl.fbaipublicfiles.com/deit/deit_tiny_distilled_patch16_224-b40b3cf7.pth",
-            map_location="cpu", check_hash=True
-        )
-        model.load_state_dict(checkpoint["model"])
-    return model
+# @register_model
+# def deit_tiny_distilled_patch16_224(pretrained=False, **kwargs):
+#     model = DistilledVisionTransformer(
+#         patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
+#         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     model.default_cfg = _cfg()
+#     if pretrained:
+#         checkpoint = torch.hub.load_state_dict_from_url(
+#             url="https://dl.fbaipublicfiles.com/deit/deit_tiny_distilled_patch16_224-b40b3cf7.pth",
+#             map_location="cpu", check_hash=True
+#         )
+#         model.load_state_dict(checkpoint["model"])
+#     return model
 
 
-@register_model
-def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
-    model = DistilledVisionTransformer(
-        patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    model.default_cfg = _cfg()
-    if pretrained:
-        checkpoint = torch.hub.load_state_dict_from_url(
-            url="https://dl.fbaipublicfiles.com/deit/deit_small_distilled_patch16_224-649709d9.pth",
-            map_location="cpu", check_hash=True
-        )
-        model.load_state_dict(checkpoint["model"])
-    return model
+# @register_model
+# def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
+#     model = DistilledVisionTransformer(
+#         patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, qkv_bias=True,
+#         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     model.default_cfg = _cfg()
+#     if pretrained:
+#         checkpoint = torch.hub.load_state_dict_from_url(
+#             url="https://dl.fbaipublicfiles.com/deit/deit_small_distilled_patch16_224-649709d9.pth",
+#             map_location="cpu", check_hash=True
+#         )
+#         model.load_state_dict(checkpoint["model"])
+#     return model
 
 
-@register_model
-def deit_base_distilled_patch16_224(pretrained=False, **kwargs):
-    model = DistilledVisionTransformer(
-        patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    model.default_cfg = _cfg()
-    if pretrained:
-        checkpoint = torch.hub.load_state_dict_from_url(
-            url="https://dl.fbaipublicfiles.com/deit/deit_base_distilled_patch16_224-df68dfff.pth",
-            map_location="cpu", check_hash=True
-        )
-        model.load_state_dict(checkpoint["model"])
-    return model
+# @register_model
+# def deit_base_distilled_patch16_224(pretrained=False, **kwargs):
+#     model = DistilledVisionTransformer(
+#         patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+#         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     model.default_cfg = _cfg()
+#     if pretrained:
+#         checkpoint = torch.hub.load_state_dict_from_url(
+#             url="https://dl.fbaipublicfiles.com/deit/deit_base_distilled_patch16_224-df68dfff.pth",
+#             map_location="cpu", check_hash=True
+#         )
+#         model.load_state_dict(checkpoint["model"])
+#     return model
 
 
 @register_model
 def deit_base_patch16_384(pretrained=False, **kwargs):
-    model = VisionTransformer(
+    model = get_deit_model(
         img_size=384, patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     model.default_cfg = _cfg()
@@ -166,16 +178,16 @@ def deit_base_patch16_384(pretrained=False, **kwargs):
     return model
 
 
-@register_model
-def deit_base_distilled_patch16_384(pretrained=False, **kwargs):
-    model = DistilledVisionTransformer(
-        img_size=384, patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    model.default_cfg = _cfg()
-    if pretrained:
-        checkpoint = torch.hub.load_state_dict_from_url(
-            url="https://dl.fbaipublicfiles.com/deit/deit_base_distilled_patch16_384-d0272ac0.pth",
-            map_location="cpu", check_hash=True
-        )
-        model.load_state_dict(checkpoint["model"])
-    return model
+# @register_model
+# def deit_base_distilled_patch16_384(pretrained=False, **kwargs):
+#     model = DistilledVisionTransformer(
+#         img_size=384, patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+#         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     model.default_cfg = _cfg()
+#     if pretrained:
+#         checkpoint = torch.hub.load_state_dict_from_url(
+#             url="https://dl.fbaipublicfiles.com/deit/deit_base_distilled_patch16_384-d0272ac0.pth",
+#             map_location="cpu", check_hash=True
+#         )
+#         model.load_state_dict(checkpoint["model"])
+#     return model

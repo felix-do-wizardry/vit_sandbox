@@ -52,3 +52,12 @@ python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
     --data-path /host/ubuntu/data/imagenet2012 \
     --output_dir ./outputs/ \
 ```
+
+> deitB_p16_224_fishpp
+```bash
+python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
+    --model deit_base_patch16_224 --batch-size 2 \
+    --data-path /host/ubuntu/data/imagenet2012 --output_dir ./outputs/ \
+    --fishpp 1 --fish_global_heads 1 --fish_mask_type hdist --fish_mask_levels 3 \
+
+```
