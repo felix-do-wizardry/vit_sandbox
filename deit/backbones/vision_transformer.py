@@ -248,8 +248,10 @@ class Attention_FishPP(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
         
         # self.pi = nn.Parameter(torch.ones(1, 1, self.mask_levels))
-        self.level_mix = nn.Linear(self.mask_levels, self.num_heads // self.global_heads, bias=False)
-        torch.nn.init.constant_(self.level_mix.weight, 1.0)
+        head_ratio = self.num_heads // self.global_heads
+        # self.level_mix = nn.Linear(self.mask_levels, self.num_heads // self.global_heads, bias=False)
+        # torch.nn.init.constant_(self.level_mix.weight, 1.0)
+        self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, head_ratio))
         
         hm = H_Matrix(
             t=self.token_grid_size,
@@ -300,7 +302,7 @@ class Attention_FishPP(nn.Module):
         # qkv = qkv.reshape(B, N, 3, self.global_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         # q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
         
-        qkv = qkv.reshape(B, N, self.total_heads, self.head_dim).permute(0, 2, 1, 3)
+        qkv = qkv.reshape(B, N, self.total_heads, self.head_dim).permute(0, 2, 1, 3).contiguous()
         q = qkv[:, : self.global_heads]
         k = qkv[:, self.global_heads : self.global_heads * 2]
         v = qkv[:, self.global_heads * 2 : ]
@@ -309,7 +311,8 @@ class Attention_FishPP(nn.Module):
         
         # FishPP:
         # masks [1, 1, N, N, Level] -> [1, 1, N, N, head_ratio]
-        mask_weights = self.level_mix(self.masks)
+        # mask_weights = self.level_mix(self.masks)
+        mask_weights = self.masks @ self.mask_proj
         mask_weights = mask_weights + self.mask_cls
         
         # attn [B, GH, N, N] x masks [1, 1, N, N, head_ratio] -> [B, GH, N, N, head_ratio]
@@ -319,7 +322,7 @@ class Attention_FishPP(nn.Module):
         # a = self.level_mix(a)
         
         # [B, GH, N, N, head_ratio] -> [B, GH, head_ratio, N, N] -> [B, H, N, N]
-        a = a.permute(0, 1, 4, 2, 3).reshape(B, self.num_heads, N, N)
+        a = a.permute(0, 1, 4, 2, 3).contiguous().reshape(B, self.num_heads, N, N)
         
         attn = a
         attn = attn.softmax(dim=-1)

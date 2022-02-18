@@ -103,11 +103,12 @@ class H_Matrix:
         self.dist_dig = dist_dig
 
 # %%
-# hm = H_Matrix(
-#     t=int(224 // 16),
-#     level=2,
-# )
-# hm.match
-# hm.match_h
+if __name__ == '__main__':
+    hm = H_Matrix(
+        t=int(224 // 16),
+        level=2,
+    )
+    hm.match
+    hm.match_h
 
 # %%
