@@ -183,6 +183,7 @@ def get_args_parser():
 
 
 def main(args):
+    utils.init_distributed_mode(args)
     
     # ADDED: parse and process args for fish++
     time_stamp = time.strftime('%y%m%d_%H%M%S')
@@ -213,7 +214,6 @@ def main(args):
         args.output_dir = os.path.join(args.output_dir, args.exp_name)
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     
-    utils.init_distributed_mode(args)
     print(args)
     
     print(f'timestamp[{time_stamp}]')
