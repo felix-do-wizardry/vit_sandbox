@@ -268,13 +268,13 @@ class Attention_FishPP(nn.Module):
         self.masks = torch.tensor(np.array([
             indexed_mask == i
             for i in range(self.mask_levels)
-        ]), dtype=torch.int32, device='cuda', requires_grad=False,
+        ]), dtype=torch.float32, device='cuda', requires_grad=False,
         ).permute(1, 2, 0)[None, None]
         
         # [N, N] -> [N, N] -> [1, 1, N, N, 1]
         self.mask_cls = torch.tensor(
             indexed_mask == -1,
-            dtype=torch.int32, device='cuda', requires_grad=False,
+            dtype=torch.float32, device='cuda', requires_grad=False,
         )[None, None, :, :, None]
         
         # TODO: implement non-linear proj for local attention
