@@ -87,7 +87,7 @@ class H_Matrix:
         # df = pd.DataFrame(data)
         # df
         dist_neg = -dist
-        digitize_levels = 10
+        digitize_levels = level + 1
         dist_dig = np.clip(np.digitize(
             dist_neg,
             np.percentile(
@@ -95,7 +95,10 @@ class H_Matrix:
                 np.linspace(0, 100, digitize_levels + 1),
             ),
         ), 1, digitize_levels) - 1
+        dist_dig[0, :] = -1
+        dist_dig[:, 0] = -1
         
+        # shape = [t*t+1, t*t+1], range = [-1, level]
         self.match = match
         self.match_h = match_h
         self.dist = dist

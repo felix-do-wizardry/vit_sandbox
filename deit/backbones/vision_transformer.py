@@ -291,11 +291,13 @@ class Attention_FishPP(nn.Module):
         # TODO: implement non-linear proj for local attention
         
         if DEBUG:
-            print(f'<Attention> [FISH] heads[{global_heads}->{num_heads}]',
+            print(f'<Attention> [FISH]',
+                f'heads[{global_heads}->{num_heads}]',
                 f'mask_type[{mask_type}]',
-                f'mask_levels[{mask_levels}]',
-                f'token_grid_size[{token_grid_size}]',
                 f'qkv[{dim}->{total_dim}]',
+                f'levels[{mask_levels}]',
+                f't[{token_grid_size}]',
+                # f'masks_shape[{list(masks.shape)}]',
             )
     
     def forward(self, x):
@@ -408,7 +410,8 @@ class VisionTransformer_FishPP(nn.Module):
             weight_init: (str): weight init scheme
         """
         super().__init__()
-        print('overflown kwargs:', kwargs)
+        if len(kwargs) > 0:
+            print('overflown kwargs:', kwargs)
         
         assert mask_levels >= 2
         self.mask_levels = mask_levels
@@ -430,6 +433,8 @@ class VisionTransformer_FishPP(nn.Module):
             indexed_mask = hm.match_h
         elif self.mask_type in ['hdist']:
             indexed_mask = hm.match
+        elif self.mask_type in ['dist']:
+            indexed_mask = hm.dist_dig
         else:
             raise NotImplementedError(f'`mask_type`[{self.mask_type}] has not been implemented')
         
@@ -453,6 +458,17 @@ class VisionTransformer_FishPP(nn.Module):
             device='cuda',
             requires_grad=False,
         )[None, None, :, :, None]
+        
+        print()
+        print(f'<VIT> [FISH]',
+            # f'',
+            f'depth[{depth}]',
+            f't[{self.token_grid_size}]',
+            f'masks[{masks.size()}]',
+            f'mask_cls[{mask_cls.size()}]',
+            f'mask_type[{self.mask_type}]',
+        )
+        print()
         
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
@@ -484,6 +500,7 @@ class VisionTransformer_FishPP(nn.Module):
             )
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
+        print()
 
         # Representation layer
         if representation_size and not distilled:
@@ -607,7 +624,8 @@ class VisionTransformer(nn.Module):
             weight_init: (str): weight init scheme
         """
         super().__init__()
-        print('overflown kwargs:', kwargs)
+        if len(kwargs) > 0:
+            print('DeiT overflown kwargs:', kwargs)
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.num_tokens = 2 if distilled else 1

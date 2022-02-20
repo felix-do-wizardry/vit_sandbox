@@ -15,10 +15,11 @@ from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.scheduler import create_scheduler
 from timm.optim import create_optimizer
-from timm.utils import NativeScaler, get_state_dict, ModelEma
+# from timm.utils import NativeScaler, get_state_dict, ModelEma
+from timm.utils import get_state_dict, ModelEma
 
 from datasets import build_dataset
-from engine import train_one_epoch, evaluate
+from engine import train_one_epoch, evaluate, NativeScaler
 from losses import DistillationLoss
 from samplers import RASampler
 import models
@@ -36,6 +37,8 @@ def get_args_parser():
     parser.add_argument('--fish_global_heads', default=1, type=int, help='number of global head attention matrices')
     parser.add_argument('--fish_mask_levels', default=2, type=int, help='number of h-matrix levels')
     parser.add_argument('--fish_mask_type', default='h', type=str, help='type of mask, one of `h1d`, `h`, `hdist`, `dist`')
+    
+    parser.add_argument('--accumulation_steps', default=0, type=int, help='number of steps to accumulate grads before update, will increase the effective batch size')
     
     parser.add_argument('--exp_name', default='', type=str, help='name of the experiment, set to overwrite | leave blank to be set')
     parser.add_argument('--wandb', default=1, type=int, help='wandb')
@@ -192,6 +195,14 @@ def main(args):
         'deit_small', 'deitS').replace(
         'deit_tiny', 'deitT').replace(
         '_patch', '_p')
+    _acml = max(1, args.accumulation_steps)
+    _bs_eff = _acml * args.batch_size * utils.get_world_size()
+    # bs_dict = {
+    #     'per_gpu': args.batch_size,
+    #     'gpus': utils.get_world_size(),
+    #     'accumulate': _acml,
+    #     'effective': _bs_eff,
+    # }
     if args.fishpp:
         assert args.fish_global_heads >= 1
         assert args.fish_mask_levels >= 0
@@ -206,7 +217,8 @@ def main(args):
             time_stamp,
             f'{model_name_short}',
             _fish_type_str,
-            f'bs{args.batch_size}x{utils.get_world_size()}',
+            f'bs{args.batch_size}x{utils.get_world_size()}' + (
+                f'x{args.accumulation_steps}' if args.accumulation_steps >= 2 else ''),
         ])
     
     if args.output_dir:
@@ -242,11 +254,12 @@ def main(args):
         wandb.define_metric("train_mem_gb", summary="max")
         
         wandb.run.summary['timestamp'] = time_stamp
-        wandb.run.summary['epoch'] = 0
+        wandb.run.summary['epoch'] = -1
         wandb.run.summary['acc'] = 0.0
         wandb.run.summary['acc5'] = 0.0
         wandb.run.summary['type'] = _fish_type_str
         wandb.run.summary['bs'] = args.batch_size
+        wandb.run.summary['bs_eff'] = _bs_eff
         wandb.run.summary['gpu'] = utils.get_world_size()
         # wandb.run.summary.update()
         
@@ -390,7 +403,9 @@ def main(args):
     linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size() / 512.0
     args.lr = linear_scaled_lr
     optimizer = create_optimizer(args, model_without_ddp)
+    
     loss_scaler = NativeScaler()
+    # loss_scaler = utils.NativeScaler()
 
     lr_scheduler, _ = create_scheduler(args, optimizer)
 
@@ -463,6 +478,7 @@ def main(args):
         _batch_limit = None
         if args.metrics_only:
             _batch_limit = 100
+            print(f'\nmode[METRICS_ONLY] will run for {_batch_limit} batches then exit\n')
         
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
@@ -470,6 +486,7 @@ def main(args):
             args.clip_grad, model_ema, mixup_fn,
             set_training_mode=args.finetune == '',  # keep in eval mode during finetuning
             batch_limit=_batch_limit,
+            accumulation_steps=args.accumulation_steps,
         )
         elapsed_time_epoch_train = time.time() - start_time_epoch
 
