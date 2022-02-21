@@ -27,6 +27,8 @@ import utils
 
 import wandb
 import os
+import sys
+from fvcore.nn import FlopCountAnalysis
 
 
 def get_args_parser():
@@ -42,7 +44,9 @@ def get_args_parser():
     
     parser.add_argument('--exp_name', default='', type=str, help='name of the experiment, set to overwrite | leave blank to be set')
     parser.add_argument('--wandb', default=1, type=int, help='wandb')
-    parser.add_argument('--metrics_only', default=0, type=int, help='whether to do a quick run for metrics and exit')
+    parser.add_argument('--metrics_only', default=0, type=int, help='whether to quickly calculate FULL metrics and exit')
+    parser.add_argument('--metrics', default=1, type=int, help='whether to calculate for flops and params metrics')
+    parser.add_argument('--batch_limit', default=0, type=int, help='number of batches to limit training')
     
     parser.add_argument('--batch-size', default=64, type=int)
     parser.add_argument('--epochs', default=300, type=int)
@@ -261,6 +265,7 @@ def main(args):
         wandb.run.summary['bs'] = args.batch_size
         wandb.run.summary['bs_eff'] = _bs_eff
         wandb.run.summary['gpu'] = utils.get_world_size()
+        wandb.run.summary['image_size'] = args.input_size
         # wandb.run.summary.update()
         
         wandb.config.update(args)
@@ -273,6 +278,7 @@ def main(args):
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
+    # seed = args.seed
     torch.manual_seed(seed)
     np.random.seed(seed)
     # random.seed(seed)
@@ -477,8 +483,49 @@ def main(args):
         
         _batch_limit = None
         if args.metrics_only:
+            assert args.accumulation_steps < 2, f'args.metrics_only==True | args.accumulation_steps[{args.accumulation_steps}] is not allowed'
             _batch_limit = 100
-            print(f'\nmode[METRICS_ONLY] will run for {_batch_limit} batches then exit\n')
+            args.metrics = 1
+            print(f'\nargs.metrics_only==True, will test on {_batch_limit} batches',
+                f'({_batch_limit * args.batch_size} samples) for train and val, then exit\n')
+        elif args.batch_limit > 0:
+            _batch_limit = args.batch_limit
+        
+        if args.metrics and utils.is_main_process() and epoch == 0:
+            print('testing for metrics A')
+            _img_size = args.input_size
+            _input = torch.tensor(
+                np.random.sample([1, 3, _img_size, _img_size]),
+                dtype=torch.float32,
+                device='cuda',
+            )
+            model.train(True)
+            flops = FlopCountAnalysis(model, _input)
+            print(f'fvcore GFLOPS: {flops.total() / 1e9}')
+            
+            param_count = sum([p.numel() for p in model_without_ddp.parameters() if p.requires_grad])
+            print(f"param_count: total[{param_count}]")
+            
+            metrics = {
+                'gflops': float(flops.total() / 1e9),
+                'params': int(param_count),
+                # 'batch_size': args.batch_size,
+                # 'patch_size': config.MODEL.SWIN.PATCH_SIZE,
+                # 'd_model': config.MODEL.SWIN.EMBED_DIM,
+                # 'window_size': config.MODEL.SWIN.WINDOW_SIZE,
+                # 'image_size': _img_size,
+                # 'fish': 'pp',
+                # 'train': {k: _stat_train[k] for k in ['vram_gb', 'time_cost', 'time_cost_batch']},
+                # 'test': {k: _stat_val[k] for k in ['vram_gb', 'time_cost', 'time_cost_batch']},
+            }
+            if args.wandb:
+                for k, v in metrics.items():
+                    wandb.run.summary[k] = v
+                metrics.update(dict(wandb.run.summary))
+            
+            _fp = os.path.join(args.output_dir, 'metrics.json')
+            with open(_fp, 'w') as fo:
+                json.dump(metrics, fo, indent=4)
         
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
@@ -515,25 +562,55 @@ def main(args):
                      'epoch': epoch,
                      'n_parameters': n_parameters}
         
-        if utils.is_main_process() and args.wandb:
+        if utils.is_main_process():
             _mem_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
-            wandb_dict = {
-                'epoch': epoch,
-                **{f'train_{k}': v for k, v in train_stats.items()},
-                **{f'test_{k}': v for k, v in test_stats.items()},
+            if args.metrics_only:
+                speed_train = _batch_limit * args.batch_size / elapsed_time_epoch_train
+                speed_test = _batch_limit * args.batch_size / elapsed_time_epoch_test
+            else:
+                speed_train = 1_281_167 / elapsed_time_epoch_train
+                speed_test = 50_000 / elapsed_time_epoch_test
+            
+            metrics = {
                 'train_mem_gb': float(_mem_gb),
-                'train_time_h': elapsed_time_epoch_train / 3600,
-                'test_time_h': elapsed_time_epoch_test / 3600,
-                'elapsed_time_h': elapsed_time / 3600,
+                'speed_train': speed_train / utils.get_world_size(),
+                'speed_test': speed_test / utils.get_world_size(),
             }
-            wandb.run.summary['epoch'] = epoch
-            wandb.run.summary['acc'] = float(max_accuracy)
-            wandb.run.summary['acc5'] = float(max_accuracy5)
-            wandb.log(wandb_dict)
-            print(f'[WandB]: {wandb_dict}')
+            if args.metrics and epoch == 0:
+                if args.wandb:
+                    for k, v in metrics.items():
+                        wandb.run.summary[k] = v
+                
+                with open(_fp, 'r') as fo:
+                    metrics_json = json.load(fo)
+                metrics_json = {**metrics_json, **metrics}
+                
+                _fp = os.path.join(args.output_dir, 'metrics.json')
+                with open(_fp, 'w') as fo:
+                    json.dump(metrics_json, fo, indent=4)
+            
+            if args.wandb:
+                wandb_dict = {
+                    'epoch': epoch,
+                    **{f'train_{k}': v for k, v in train_stats.items()},
+                    **{f'test_{k}': v for k, v in test_stats.items()},
+                    'train_time_h': elapsed_time_epoch_train / 3600,
+                    'test_time_h': elapsed_time_epoch_test / 3600,
+                    'elapsed_time_h': elapsed_time / 3600,
+                    # 'train_mem_gb': float(_mem_gb),
+                    # 'speed_train': speed_train,
+                    # 'speed_test': speed_test,
+                    **metrics,
+                }
+                wandb.run.summary['epoch'] = epoch
+                wandb.run.summary['acc'] = float(max_accuracy)
+                wandb.run.summary['acc5'] = float(max_accuracy5)
+                wandb.log(wandb_dict)
+                print(f'[WandB]: {wandb_dict}')
         
         if args.metrics_only:
-            assert 0, 'args.metrics_only==True -> Exiting early'
+            print(f'\nargs.metrics_only==True -> Exiting early\n')
+            sys.exit()
         
         # move model saving to after evaluation and logging
         

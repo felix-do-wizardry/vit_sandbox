@@ -111,7 +111,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         
         _index += 1
-        if batch_limit and _index >= batch_limit:
+        if batch_limit and _index >= batch_limit > 0:
             break
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -147,7 +147,7 @@ def evaluate(data_loader, model, device, batch_limit=None):
         metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
         
         _index += 1
-        if batch_limit and _index >= batch_limit:
+        if batch_limit and _index >= batch_limit > 0:
             break
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
