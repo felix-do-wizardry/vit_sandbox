@@ -495,7 +495,8 @@ def main(args):
             print('testing for metrics A')
             _img_size = args.input_size
             _input = torch.tensor(
-                np.random.sample([1, 3, _img_size, _img_size]),
+                # np.random.sample([1, 3, _img_size, _img_size]),
+                np.ones(shape=[1, 3, _img_size, _img_size]) / 2,
                 dtype=torch.float32,
                 device='cuda',
             )
