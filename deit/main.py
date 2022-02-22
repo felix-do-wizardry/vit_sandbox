@@ -507,7 +507,7 @@ def main(args):
             param_count = sum([p.numel() for p in model_without_ddp.parameters() if p.requires_grad])
             print(f"param_count: total[{param_count}]")
             
-            metrics = {
+            _metrics = {
                 'gflops': float(flops.total() / 1e9),
                 'params': int(param_count),
                 # 'batch_size': args.batch_size,
@@ -520,13 +520,13 @@ def main(args):
                 # 'test': {k: _stat_val[k] for k in ['vram_gb', 'time_cost', 'time_cost_batch']},
             }
             if args.wandb:
-                for k, v in metrics.items():
+                for k, v in _metrics.items():
                     wandb.run.summary[k] = v
-                metrics.update(dict(wandb.run.summary))
+                _metrics.update(dict(wandb.run.summary))
             
             _fp = os.path.join(args.output_dir, 'metrics.json')
             with open(_fp, 'w') as fo:
-                json.dump(metrics, fo, indent=4)
+                json.dump(_metrics, fo, indent=4)
         
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
@@ -572,23 +572,24 @@ def main(args):
                 speed_train = 1_281_167 / elapsed_time_epoch_train
                 speed_test = 50_000 / elapsed_time_epoch_test
             
-            metrics = {
-                'train_mem_gb': float(_mem_gb),
-                'speed_train': speed_train / utils.get_world_size(),
-                'speed_test': speed_test / utils.get_world_size(),
+            _metrics = {
+                # 'train_mem_gb': float(_mem_gb),
+                'speed_train': float(speed_train / utils.get_world_size()),
+                'speed_test': float(speed_test / utils.get_world_size()),
             }
             if args.metrics and epoch == 0:
                 if args.wandb:
-                    for k, v in metrics.items():
+                    for k, v in _metrics.items():
                         wandb.run.summary[k] = v
                 
+                _fp = os.path.join(args.output_dir, 'metrics.json')
                 with open(_fp, 'r') as fo:
                     metrics_json = json.load(fo)
-                metrics_json = {**metrics_json, **metrics}
+                metrics_json = {**metrics_json, **_metrics}
                 
-                _fp = os.path.join(args.output_dir, 'metrics.json')
                 with open(_fp, 'w') as fo:
                     json.dump(metrics_json, fo, indent=4)
+                pass
             
             if args.wandb:
                 wandb_dict = {
@@ -598,12 +599,12 @@ def main(args):
                     'train_time_h': elapsed_time_epoch_train / 3600,
                     'test_time_h': elapsed_time_epoch_test / 3600,
                     'elapsed_time_h': elapsed_time / 3600,
-                    # 'train_mem_gb': float(_mem_gb),
+                    'train_mem_gb': float(_mem_gb),
                     # 'speed_train': speed_train,
                     # 'speed_test': speed_test,
-                    **metrics,
+                    # **metrics,
                 }
-                wandb.run.summary['epoch'] = epoch
+                wandb.run.summary['epoch'] = int(epoch)
                 wandb.run.summary['acc'] = float(max_accuracy)
                 wandb.run.summary['acc5'] = float(max_accuracy5)
                 wandb.log(wandb_dict)
