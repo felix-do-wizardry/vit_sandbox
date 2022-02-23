@@ -28,14 +28,14 @@ python -m torch.distributed.launch --nproc_per_node=4 --use_env main.py \
     --model deit_base_patch16_224 \
     --batch-size 256 \
     --data-path /host/ubuntu/data/imagenet2012 \
-    --output_dir ./outputs/ \
+    --output_dir /host/ubuntu/vision/fishpp \
 ```
 
 > deitB_p16_224_fishpp_hl2_bs256x4
 ```bash
 CUDA_VISIBLE_DEVICES=2,3 python -m torch.distributed.launch --nproc_per_node=2 --use_env main.py \
-    --model deit_base_patch16_224 --batch-size 2 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir ./outputs/ \
+    --model deit_base_patch16_224 --batch-size 256 \
+    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
     --fishpp 1 --fish_global_heads 1 --fish_mask_type hdist --fish_mask_levels 3 \
 ```
 
@@ -49,14 +49,14 @@ python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
     --model deit_base_patch16_224 \
     --batch-size 128 \
     --data-path /host/ubuntu/data/imagenet2012 \
-    --output_dir ./outputs/ \
+    --output_dir /host/ubuntu/vision/fishpp \
 ```
 
 > deitB_p16_224_fishpp_bs128x1
 ```bash
 python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
     --model deit_base_patch16_224 --batch-size 128 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir ./outputs/ \
+    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
     --fishpp 1 --fish_global_heads 1 --fish_mask_type hdist --fish_mask_levels 3 \
 
 ```
@@ -65,14 +65,14 @@ python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
 ```bash
 python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
     --model deit_small_patch16_224 --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir ./outputs/
+    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp
 ```
 
 > deitS_p16_224_fishpp_bs256x1
 ```bash
 python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
     --model deit_small_patch16_224 --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir ./outputs/ \
+    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
     --fishpp 1 --fish_global_heads 1 --fish_mask_type hdist --fish_mask_levels 3 \
 
 ```
@@ -81,7 +81,7 @@ python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
 ```bash
 python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
     --model deit_small_patch16_224 --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir ./outputs/ \
+    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
     --fishpp 1 --fish_global_heads 1 --fish_mask_type hdist --fish_mask_levels 3 \
     --accumulation_steps 4
 
@@ -91,8 +91,31 @@ python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
 ```bash
 python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
     --model deit_small_patch16_224 --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir ./outputs/ \
+    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
     --fishpp 1 --fish_global_heads 1 --fish_mask_type dist --fish_mask_levels 3 \
     --accumulation_steps 4
+
+
+python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
+    --model deit_small_patch16_224 --batch-size 128 \
+    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
+    --fishpp 1 --fish_global_heads 2 --fish_mask_type hdist --fish_mask_levels 3 \
+    --accumulation_steps 8
+
+
+```
+
+# ACCUMULATION
+```
+echo METRICS tiny baseline 256
+python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 12347 main.py \
+    --model deit_tiny_patch16_224 --batch-size 64 \
+    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp_temp \
+    --batch_limit 100 --accumulation_steps 4
+
+python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 12347 main.py \
+    --model deit_tiny_patch16_224 --batch-size 256 \
+    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp_temp \
+    --batch_limit 100 --accumulation_steps 0
 
 ```

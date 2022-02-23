@@ -4,7 +4,7 @@ import json
 
 # %%
 class H_Matrix:
-    def __init__(self, t=14, level=2):
+    def __init__(self, t=14, level=2, mask_type='h'):
         '''Args:
         t (int): number of token columns/rows, assuming square input
         level (int): level of h matrix
@@ -16,16 +16,20 @@ class H_Matrix:
         self.n = n
         # print(f'{s=} {p=} {t=} {n=}')
         
+        self.is_dist = mask_type in ['dist']
+        self.mask_type = mask_type
+        
         assert isinstance(level, int)
         assert level > 0
-        assert level % 2 == 0
         self.level = level
         w = t / 2 ** (level / 2)
-        assert w % 1 == 0
+        if not self.is_dist:
+            assert level % 2 == 0
+            assert w % 1 == 0
+        
         self.w = int(w)
         self.cw = int(w * w)
         # w: window/cell size | cw: number of tokens per window/cell
-        # print(f'{w=}, {cw=}')
         
         # m: h matrix mask
         self.m = np.zeros([self.n, self.n], dtype=int)
@@ -59,33 +63,23 @@ class H_Matrix:
             pq = (int(iq // t), iq % t)
             for ik in range(n):
                 pk = (int(ik // t), ik % t)
-                _dist = np.sqrt(np.sum((np.array(pq) - np.array(pk)) ** 2)) / t
                 
-                x_match = int(cxf[iq] == cxf[ik])
-                y_match = int(cyf[iq] == cyf[ik])
+                if self.is_dist:
+                    _dist = np.sqrt(np.sum((np.array(pq) - np.array(pk)) ** 2)) / t
+                    dist[iq + 1, ik + 1] = _dist
+                else:
+                    x_match = int(cxf[iq] == cxf[ik])
+                    y_match = int(cyf[iq] == cyf[ik])
+                    
+                    _match = x_match + y_match
+                    _match_h = x_match * y_match + y_match
+                    
+                    assert _match in [0, 1, 2]
+                    
+                    match[iq + 1, ik + 1] = _match
+                    match_h[iq + 1, ik + 1] = _match_h
                 
-                _match = x_match + y_match
-                _match_h = x_match * y_match + y_match
-                
-                assert _match in [0, 1, 2]
-                
-                # match[iq, ik] = _match
-                # match_h[iq, ik] = _match_h
-                # dist[iq, ik] = _dist
-                match[iq + 1, ik + 1] = _match
-                match_h[iq + 1, ik + 1] = _match_h
-                dist[iq + 1, ik + 1] = _dist
-                
-                # data.append({
-                #     'iq': iq,
-                #     'ik': ik,
-                #     'match': _match,
-                #     'pq': pq,
-                #     'pk': pk,
-                # })
         
-        # df = pd.DataFrame(data)
-        # df
         dist_neg = -dist
         digitize_levels = level + 1
         dist_dig = np.clip(np.digitize(
@@ -104,6 +98,17 @@ class H_Matrix:
         self.dist = dist
         self.dist_neg = dist_neg
         self.dist_dig = dist_dig
+        
+        
+        if mask_type in ['h']:
+            self.indexed_mask = self.match_h
+        elif mask_type in ['hdist']:
+            self.indexed_mask = self.match
+        elif mask_type in ['dist']:
+            self.indexed_mask = self.dist_dig
+        else:
+            raise NotImplementedError(f'`mask_type`[{mask_type}] has not been implemented')
+        
 
 # %%
 if __name__ == '__main__':

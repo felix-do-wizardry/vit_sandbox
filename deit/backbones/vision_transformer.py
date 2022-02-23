@@ -424,19 +424,23 @@ class VisionTransformer_FishPP(nn.Module):
         
         self.token_grid_size = int(img_size // patch_size)
         self.token_count = self.token_grid_size * self.token_grid_size + 1
+        
+        # h_levels == mask_levels - 1
         hm = H_Matrix(
             t=self.token_grid_size,
             level=self.mask_levels - 1,
+            mask_type=self.mask_type,
         )
+        indexed_mask = hm.indexed_mask
         
-        if self.mask_type in ['h']:
-            indexed_mask = hm.match_h
-        elif self.mask_type in ['hdist']:
-            indexed_mask = hm.match
-        elif self.mask_type in ['dist']:
-            indexed_mask = hm.dist_dig
-        else:
-            raise NotImplementedError(f'`mask_type`[{self.mask_type}] has not been implemented')
+        # if self.mask_type in ['h']:
+        #     indexed_mask = hm.match_h
+        # elif self.mask_type in ['hdist']:
+        #     indexed_mask = hm.match
+        # elif self.mask_type in ['dist']:
+        #     indexed_mask = hm.dist_dig
+        # else:
+        #     raise NotImplementedError(f'`mask_type`[{self.mask_type}] has not been implemented')
         
         _shape = list(indexed_mask.shape)
         assert (len(_shape) == 2 and _shape[0] == _shape[1] == self.token_count
