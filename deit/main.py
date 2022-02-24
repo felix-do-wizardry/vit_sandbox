@@ -39,6 +39,7 @@ def get_args_parser():
     parser.add_argument('--fish_global_heads', default=1, type=int, help='number of global head attention matrices')
     parser.add_argument('--fish_mask_levels', default=2, type=int, help='number of h-matrix levels')
     parser.add_argument('--fish_mask_type', default='h', type=str, help='type of mask, one of `h1d`, `h`, `hdist`, `dist`')
+    parser.add_argument('--fish_non_linear', default=0, type=int, help='whether to use non-linear fish head projection')
     
     parser.add_argument('--accumulation_steps', default=0, type=int, help='number of steps to accumulate grads before update, will increase the effective batch size')
     
@@ -211,7 +212,11 @@ def main(args):
         assert args.fish_global_heads >= 1
         assert args.fish_mask_levels >= 0
         assert args.fish_mask_type in ['h1d', 'h', 'hdist', 'dist']
-        _fish_type_str = f'fishpp_{args.fish_mask_type}_g{args.fish_global_heads}_hl{args.fish_mask_levels}'
+        _fish_type_str = '_'.join([
+            f'fishpp_{args.fish_mask_type}',
+            f'g{args.fish_global_heads}',
+            f'hl{args.fish_mask_levels}{"nl" if args.fish_non_linear else ""}',
+        ])
         
     else:
         _fish_type_str = f'baseline'
@@ -349,7 +354,7 @@ def main(args):
         global_heads=args.fish_global_heads,
         mask_type=args.fish_mask_type,
         mask_levels=args.fish_mask_levels,
-        
+        non_linear=args.fish_non_linear,
     )
 
     if args.finetune:

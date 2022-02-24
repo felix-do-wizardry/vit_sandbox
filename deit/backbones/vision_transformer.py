@@ -220,6 +220,7 @@ class Attention_FishPP(nn.Module):
                 token_grid_size=1,
                 masks=None,
                 mask_cls=None,
+                non_linear=0,
                 # **kwargs,
                 ):
         super().__init__()
@@ -289,6 +290,11 @@ class Attention_FishPP(nn.Module):
         self.mask_cls = mask_cls
         
         # TODO: implement non-linear proj for local attention
+        self.is_non_linear = non_linear
+        if non_linear:
+            self.head_proj = nn.Linear(head_ratio, head_ratio, bias=False)
+        else:
+            self.head_proj = None
         
         if DEBUG:
             print(f'<Attention> [FISH]',
@@ -325,6 +331,10 @@ class Attention_FishPP(nn.Module):
         
         # attn [B, GH, N, N] x masks [1, 1, N, N, head_ratio] -> [B, GH, N, N, head_ratio]
         a = attn[..., None] * mask_weights
+        
+        if self.is_non_linear:
+            a = nn.functional.relu(a)
+            a = self.head_proj(a)
         
         # # [B, GH, N, N, Level] -> [B, GH, N, N, head_ratio]
         # a = self.level_mix(a)
@@ -387,6 +397,7 @@ class VisionTransformer_FishPP(nn.Module):
                  global_heads=1,
                  mask_type='h',
                  mask_levels=3,
+                 non_linear=0,
                  **kwargs
                  ):
         """
@@ -501,6 +512,7 @@ class VisionTransformer_FishPP(nn.Module):
                 token_grid_size=int(img_size // patch_size),
                 masks=masks,
                 mask_cls=mask_cls,
+                non_linear=non_linear,
             )
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
