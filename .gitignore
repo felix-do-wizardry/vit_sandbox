@@ -6,3 +6,6 @@ deit/checkpoints/
 deit/wandb/*
 deit/outputs/*
 plots/*
+swin_od_220304/.github/*
+swin_od_220304/apex/*
+*/.DS_Store

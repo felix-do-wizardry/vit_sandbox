@@ -17,6 +17,7 @@ from mmcv_custom import load_checkpoint
 from mmdet.utils import get_root_logger
 from ..builder import BACKBONES
 
+from mmcv.runner import BaseModule
 
 class Mlp(nn.Module):
     """ Multilayer perceptron."""
@@ -170,6 +171,7 @@ class WindowAttention_GMM(nn.Module):
 
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.,
                 prune_ratio=0,
+                prune_type='entry',
                 ):
 
         super().__init__()
@@ -178,7 +180,16 @@ class WindowAttention_GMM(nn.Module):
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.scale = qk_scale or head_dim ** -0.5
-
+        
+        self.printing = True
+        self.prune_ratio = float(max(0, min(1, prune_ratio)))
+        self.pruning = self.prune_ratio > 0
+        self.token_count = self.window_size[0] * self.window_size[1]
+        self.token_count_pruned = int(np.ceil(self.token_count * (1 - self.prune_ratio)))
+        self.token_count_pad = self.token_count - self.token_count_pruned
+        self.prune_type = prune_type
+        assert prune_type in ['entry']
+        
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
@@ -194,6 +205,12 @@ class WindowAttention_GMM(nn.Module):
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+        # slice rel_pos_index along Nq
+        
+        _shape0 = relative_position_index.shape
+        relative_position_index = relative_position_index[:self.token_count_pruned]
+        _shape1 = relative_position_index.shape
+        # print(f'rel_pos_index shape before[{_shape0}] after[{_shape1}]')
         self.register_buffer("relative_position_index", relative_position_index)
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
@@ -203,9 +220,6 @@ class WindowAttention_GMM(nn.Module):
 
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
-        self.prune_ratio = float(max(0, min(1, prune_ratio)))
-        self.token_count = self.window_size[0] * self.window_size[1]
-        self.token_count_pruned = int(np.ceil(self.token_count * (1 - self.prune_ratio)))
         
         self.dist = Distance()
         self.register_buffer('pi_mask', torch.ones(
@@ -213,6 +227,14 @@ class WindowAttention_GMM(nn.Module):
             self.token_count,
             self.token_count,
         ))
+        
+        print(f'\n[WindowAttention] [GMM]',
+            f'prune_ratio[{self.prune_ratio}]',
+            f'token_count[{self.token_count} = {self.token_count_pruned} + {self.token_count_pad}]',
+            f'prune_type[{self.prune_type}]',
+            f'rel_pos_index[{_shape0} -> {_shape1}]',
+        )
+        print()
 
     def forward(self, x, mask=None, Hp = None, Wp = None):
         """ Forward function.
@@ -224,6 +246,9 @@ class WindowAttention_GMM(nn.Module):
         B_, N, C = x.shape
         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+        
+        if self.pruning:
+            q = q[:, :, :self.token_count_pruned]
         
         attn = (-self.scale/2.0)*self.dist._sq_dist(q, k, postprocess = False)
         
@@ -238,8 +263,23 @@ class WindowAttention_GMM(nn.Module):
             # attn = attn + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, N, N)
         # attn = torch.clamp(torch.abs(self.pi), max = 1.)*torch.exp(attn)
-        attn = self.pi_mask*torch.exp(attn)
-
+        
+        # TODO: enable for training
+        # attn = self.pi_mask*torch.exp(attn)
+        
+        if self.pruning:
+            _shape0 = attn.shape
+            attn = nn.functional.pad(
+                attn,
+                # pad on axis=-2 (Nq) of [_B, H, Nq, Nk]
+                pad=(0, 0, 0, self.token_count_pad),
+                mode='constant',
+                value=0.0,
+            )
+            if self.printing:
+                print(f'[FORWARD] padded attn [{_shape0}] -> [{attn.shape}]')
+        
+        self.printing = False
         # print(self.pi.shape, attn.shape)
         # H_grid, W_grid = Hp//self.window_size, Wp//self.window_size
         # attn = attn.view(B_ // nW, H_grid, W_grid, self.num_heads, N, N)
@@ -297,7 +337,7 @@ class SwinTransformerBlock(nn.Module):
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm,
                  gmm=0,
-                 prune_ratio=prune_ratio,
+                 **kwargs,
                  ):
         super().__init__()
         self.dim = dim
@@ -312,7 +352,7 @@ class SwinTransformerBlock(nn.Module):
             self.attn = WindowAttention_GMM(
                 dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
                 qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop,
-                prune_ratio=prune_ratio,
+                **kwargs,
             )
         else:
             self.attn = WindowAttention(
@@ -465,7 +505,7 @@ class BasicLayer(nn.Module):
                  downsample=None,
                  use_checkpoint=False,
                  gmm=0,
-                 prune_ratio=0,
+                 **kwargs,
                  ):
         super().__init__()
         self.window_size = window_size
@@ -488,7 +528,7 @@ class BasicLayer(nn.Module):
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                 norm_layer=norm_layer,
                 gmm=gmm,
-                prune_ratio=prune_ratio,
+                **kwargs,
                 )
             for i in range(depth)])
 
@@ -585,7 +625,8 @@ class PatchEmbed(nn.Module):
 
 
 @BACKBONES.register_module()
-class SwinTransformer(nn.Module):
+# class SwinTransformer(nn.Module):
+class SwinTransformer(BaseModule):
     """ Swin Transformer backbone.
         A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
           https://arxiv.org/pdf/2103.14030
@@ -634,10 +675,15 @@ class SwinTransformer(nn.Module):
                  out_indices=(0, 1, 2, 3),
                  frozen_stages=-1,
                  use_checkpoint=False,
+                 
+                 init_cfg=None):
+                 
                  gmm=0,
-                 prune_ratio=0,
+                 **kwargs,
                  ):
-        super().__init__()
+        assert init_cfg is None, 'To prevent abnormal initialization ' \
+                                 'behavior, init_cfg is not allowed to be set'
+        super().__init__(init_cfg=init_cfg)
 
         self.pretrain_img_size = pretrain_img_size
         self.num_layers = len(depths)
@@ -684,7 +730,7 @@ class SwinTransformer(nn.Module):
                 downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                 use_checkpoint=use_checkpoint,
                 gmm=0,
-                prune_ratio=prune_ratio,
+                **kwargs,
                 )
             self.layers.append(layer)
 

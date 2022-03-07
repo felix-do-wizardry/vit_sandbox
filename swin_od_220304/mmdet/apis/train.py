@@ -1,5 +1,9 @@
+from distutils.command.config import config
 import random
 import warnings
+from torch import nn
+from torch.nn.utils import prune
+import numpy as np
 
 import numpy as np
 import torch
@@ -47,6 +51,65 @@ def train_detector(model,
                    timestamp=None,
                    meta=None):
     logger = get_root_logger(cfg.log_level)
+    
+    def calculate_token_grids(img_size):
+        img_size = np.array(img_size)
+        token_grid = np.ceil(img_size / 28).astype(int)
+        token_grids = [token_grid]
+        x = token_grid
+        for i in range(3):
+            x = np.ceil(x / 2).astype(int)
+            token_grids.append(x)
+        token_grids = np.array(token_grids)
+        return token_grids
+
+    def add_pi(max_nW = None):
+        num_blocks = [2,2,6,2]
+        num_heads = [3,6,12,24]
+        # token_grids = calculate_token_grids([800,1333])
+        for i in range(4):
+            for j in range(num_blocks[i]):
+                model.backbone.layers[i].blocks[j].attn.pi = nn.Parameter(torch.ones(1, num_heads[i], 49, 49)/49., requires_grad = True)
+        # model.to(config.device)
+
+    def add_pi_mask(max_nW = None):
+        num_blocks = [2,2,6,2]
+        num_heads = [3,6,12,24]
+        # token_grids = calculate_token_grids([800,1333])
+        for i in range(4):
+            for j in range(num_blocks[i]):
+                model.module.backbone.layers[i].blocks[j].attn.register_buffer('pi_mask', torch.ones(1, num_heads[i], 49 ,49))
+    
+    def pruning(runner, local=True, amount=0.7):
+        num_blocks = [2,2,6,2]
+        if not local:
+            for i in range(4):
+                parameters_to_prune = []
+                # for i in range(4):
+                for j in range(num_blocks[i]):
+                    parameters_to_prune.append((runner.model.module.backbone.layers[i].blocks[j].attn, 'pi'))
+                prune.global_unstructured(parameters_to_prune, pruning_method=prune.L1Unstructured, amount=amount)
+        else:
+            for i in range(4):
+                for j in range(num_blocks[i]):
+                ###pruning locally
+                    prune.l1_unstructured(runner.model.module.backbone.layers[i].blocks[j].attn, name='pi', amount=amount)
+        
+            
+        for i in range(4):
+            for j in range(num_blocks[i]):
+                pi_mask = runner.model.module.backbone.layers[i].blocks[j].attn.pi_mask.data
+                prune.remove(runner.model.module.backbone.layers[i].blocks[j].attn, 'pi')
+                runner.model.module.backbone.layers[i].blocks[j].attn.pi.requires_grad = False
+                runner.model.module.backbone.layers[i].blocks[j].attn.register_buffer('pi_mask', pi_mask)
+                del runner.model.module.backbone.layers[i].blocks[j].attn.pi
+                # del runner.model.module.backbone.layers[i].blocks[j].attn.relative_position_bias_table
+        
+        ### CHECK PRUNING MASK
+        for i in range(4):
+            for j in range(num_blocks[i]):
+                pi_mask = runner.model.module.backbone.layers[i].blocks[j].attn.pi_mask.data
+                print((abs(pi_mask) != 0).sum())
 
     # prepare data loaders
     dataset = dataset if isinstance(dataset, (list, tuple)) else [dataset]
@@ -86,6 +149,17 @@ def train_detector(model,
             for m in model.modules():
                 if hasattr(m, "fp16_enabled"):
                     m.fp16_enabled = True
+    
+    # add_pi_mask()
+    # add_pi()
+    # checkpoint = torch.load(f'/tam/data/coco/swin_chks/swim_gmm1x_prune/latest.pth')
+    # add_pi()
+    # checkpoint = torch.load(f'/tam/data/coco/swin_chks/swim_gmm1x/latest.pth')
+
+    # model.load_state_dict(checkpoint['state_dict'])
+    # import pdb;pdb.set_trace()
+    # pruning(model, local=False)
+    
 
     # put model on gpus
     if distributed:
@@ -96,7 +170,7 @@ def train_detector(model,
             model.cuda(),
             device_ids=[torch.cuda.current_device()],
             broadcast_buffers=False,
-            find_unused_parameters=find_unused_parameters)
+            find_unused_parameters=True)
     else:
         model = MMDataParallel(
             model.cuda(cfg.gpu_ids[0]), device_ids=cfg.gpu_ids)
@@ -178,8 +252,6 @@ def train_detector(model,
             hook = build_from_cfg(hook_cfg, HOOKS)
             runner.register_hook(hook, priority=priority)
 
-    if cfg.resume_from:
-        runner.resume(cfg.resume_from)
-    elif cfg.load_from:
-        runner.load_checkpoint(cfg.load_from)
+    # runner.load_checkpoint('/tam/data/coco/swin_chks/swim_gmm1x/latest.pth')
+    # pruning(runner,local=False)
     runner.run(data_loaders, cfg.workflow)
