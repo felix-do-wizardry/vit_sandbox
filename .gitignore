@@ -6,6 +6,8 @@ deit/checkpoints/
 deit/wandb/*
 deit/outputs/*
 plots/*
-gmm/pi/*.pkl
 eigen_analysis/*.pth
 eigen_analysis/.ipynb_checkpoints/*
+gmm/pi/pi_lm_norm.pkl
+gmm/pi/pi_lm.pkl
+# gmm/pi/pi_img_deit.pkl
