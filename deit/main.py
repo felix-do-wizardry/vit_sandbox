@@ -42,6 +42,8 @@ def get_args_parser():
     parser.add_argument('--fish_non_linear', default=0, type=int, help='whether to use non-linear fish head projection')
     parser.add_argument('--fish_non_linear_bias', default=1, type=int, help='whether to use bias with non-linear fish head projection')
     
+    parser.add_argument('--fish_global_full_proj', default=1, type=int, help='whether to do full projection from global heads to local heads (should be True) (omission -> 0)')
+    
     parser.add_argument('--accumulation_steps', default=0, type=int, help='number of steps to accumulate grads before update, will increase the effective batch size')
     
     parser.add_argument('--exp_name', default='', type=str, help='name of the experiment, set to overwrite | leave blank to be set')
@@ -215,7 +217,7 @@ def main(args):
         assert args.fish_mask_type in ['h1d', 'h', 'hdist', 'dist']
         _fish_type_str = '_'.join([
             f'fishpp_{args.fish_mask_type}',
-            f'g{args.fish_global_heads}',
+            f'g{args.fish_global_heads}' + ('f' if args.fish_global_full_proj else ''),
             f'hl{args.fish_mask_levels}{"nl" + ("b" if args.fish_non_linear_bias else "") if args.fish_non_linear else ""}',
         ])
         
@@ -357,6 +359,7 @@ def main(args):
         mask_levels=args.fish_mask_levels,
         non_linear=args.fish_non_linear,
         non_linear_bias=args.fish_non_linear_bias,
+        global_full_proj=args.fish_global_full_proj,
     )
 
     if args.finetune:

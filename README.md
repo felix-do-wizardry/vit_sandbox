@@ -29,6 +29,7 @@ python -m torch.distributed.launch --nproc_per_node=4 --use_env main.py \
     --batch-size 256 \
     --data-path /host/ubuntu/data/imagenet2012 \
     --output_dir /host/ubuntu/vision/fishpp \
+    --accumulation_steps 1
 ```
 
 > deitB_p16_224_fishpp_hl2_bs256x4
@@ -36,74 +37,11 @@ python -m torch.distributed.launch --nproc_per_node=4 --use_env main.py \
 CUDA_VISIBLE_DEVICES=2,3 python -m torch.distributed.launch --nproc_per_node=2 --use_env main.py \
     --model deit_base_patch16_224 --batch-size 256 \
     --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
-    --fishpp 1 --fish_global_heads 1 --fish_mask_type hdist --fish_mask_levels 3 \
-```
-
-
-
-# QUICK TEST
-
-> deitB_p16_224_baseline_bs128x1
-```bash
-python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
-    --model deit_base_patch16_224 \
-    --batch-size 128 \
-    --data-path /host/ubuntu/data/imagenet2012 \
-    --output_dir /host/ubuntu/vision/fishpp \
-```
-
-> deitB_p16_224_fishpp_bs128x1
-```bash
-python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
-    --model deit_base_patch16_224 --batch-size 128 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
-    --fishpp 1 --fish_global_heads 1 --fish_mask_type hdist --fish_mask_levels 3 \
-
-```
-
-> deitS_p16_224_baseline_bs256x1
-```bash
-python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
-    --model deit_small_patch16_224 --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp
-```
-
-> deitS_p16_224_fishpp_bs256x1
-```bash
-python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
-    --model deit_small_patch16_224 --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
-    --fishpp 1 --fish_global_heads 1 --fish_mask_type hdist --fish_mask_levels 3 \
-
-```
-
-> deitS_p16_224_fishpp_bs256x1x4 | accumulating 4 steps
-```bash
-python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
-    --model deit_small_patch16_224 --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
-    --fishpp 1 --fish_global_heads 1 --fish_mask_type hdist --fish_mask_levels 3 \
-    --accumulation_steps 4
-
-```
-
-> deitS_p16_224_fishpp_bs256x1x4 | dist | accumulating 4 steps
-```bash
-python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
-    --model deit_small_patch16_224 --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
     --fishpp 1 --fish_global_heads 1 --fish_mask_type dist --fish_mask_levels 3 \
-    --accumulation_steps 4
-
-
-python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
-    --model deit_small_patch16_224 --batch-size 128 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
-    --fishpp 1 --fish_global_heads 2 --fish_mask_type hdist --fish_mask_levels 3 \
-    --accumulation_steps 8
-
-
+    --fish_non_linear 0 --fish_non_linear_bias 0 --fish_global_full_proj 1
 ```
+
+
 
 # ACCUMULATION
 ```

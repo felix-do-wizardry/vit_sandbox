@@ -6,3 +6,6 @@ deit/checkpoints/
 deit/wandb/*
 deit/outputs/*
 plots/*
+gmm/pi/*.pkl
+eigen_analysis/*.pth
+eigen_analysis/.ipynb_checkpoints/*
