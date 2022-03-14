@@ -493,9 +493,9 @@ def get_pi_qk_mean_stack(
 t = 14
 t2 = 2 * t - 1
 _bin = 100
-_layer = 2
-_head = 1
-pi_qk = np.abs(pi)[_layer, _head, 1:, 1:].reshape(t, t, t, t)
+# _layer = 2
+# _head = 1
+# pi_qk = np.abs(pi)[_layer, _head, 1:, 1:].reshape(t, t, t, t)
 
 H = 4
 pi_qk_mean_digs = []

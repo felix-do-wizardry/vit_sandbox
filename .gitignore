@@ -14,3 +14,4 @@ gmm/pi/*.pkl
 gmm/pi/*.npy
 gmm/attn/*.npy
 gmm/logs/eigen_log.csv
+gmm/eigen/*.npy
