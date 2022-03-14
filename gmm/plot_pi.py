@@ -614,13 +614,29 @@ def plot_pi_qk_center(layer=0, head=0):
     )
     return fig
 
-_dp = 'plots/pi_deit/pi_qk_center'
+# %%
+_dp_root = os.path.join('plots', 'pi_deit')
+image_width = 256
+readme_lines = [
+    '## PLOTS',
+]
+
+_name = f'deit_pi_qk_center'
+_dp = os.path.join(_dp_root, _name)
 if not os.path.isdir(_dp):
     os.makedirs(_dp)
+
 for _layer in range(11):
+    readme_lines.extend(['<p float="left" align="left">'])
     for _head in range(4):
         fig = plot_pi_qk_center(_layer, _head)
-        fig.write_image(os.path.join(_dp, f'deit_pi_qk_center_l{_layer}_h{_head}.png'))
+        _fn = f'{_name}_l{_layer}_h{_head}.png'
+        _fp_rel = os.path.join(_name, _fn)
+        fig.write_image(os.path.join(_dp, _fn))
+        readme_lines.append(
+            f'<img src="{_fp_rel}" width="{image_width}" />',
+        )
+    readme_lines.extend(['</p>'])
 
 fig.show()
 
@@ -633,10 +649,10 @@ _bin = 100
 # _layer = 5
 # _head = 2
 
-def plot_pi_qk_mask(layer=0, head=0):
+def plot_pi_qk_mask(layer=0, head=0, prune=0.7):
     pi_mask = np.digitize(
         pi,
-        np.percentile(pi, [50]),
+        np.percentile(pi, [prune * 100]),
     )
     pi_mask.shape
 
@@ -692,19 +708,33 @@ def plot_pi_qk_mask(layer=0, head=0):
     # )
     return fig
 
-_dp = 'plots/pi_deit/pi_qk_mask'
-if not os.path.isdir(_dp):
-    os.makedirs(_dp)
-for _layer in range(11):
-    for _head in range(4):
-        fig = plot_pi_qk_mask(_layer, _head)
-        fig.write_image(os.path.join(_dp, f'deit_pi_qk_mask_l{_layer}_h{_head}.png'))
-
-fig.show()
 
 # %%
+prune = 0.7
 
+_name = f'deit_pi_qk_mask_{int(prune * 100)}'
+_dp = os.path.join(_dp_root, _name)
+if not os.path.isdir(_dp):
+    os.makedirs(_dp)
 
+readme_lines.extend([
+    f'> {_name}',
+    # '<p float="left" align="left">',
+])
+
+for _layer in range(11):
+    readme_lines.extend(['<p float="left" align="left">'])
+    for _head in range(4):
+        fig = plot_pi_qk_mask(_layer, _head)
+        _fn = f'{_name}_l{_layer}_h{_head}.png'
+        _fp_rel = os.path.join(_name, _fn)
+        fig.write_image(os.path.join(_dp, _fn))
+        readme_lines.append(
+            f'<img src="{_fp_rel}" width="{image_width}" />',
+        )
+    readme_lines.extend(['</p>'])
+
+fig.show()
 
 
 
@@ -750,83 +780,92 @@ def get_pi_qk_mean_stack(
         fig.show()
     return r
 
-# %%
-
-
-
-
-
-
 
 # %% pi qk MEAN (all head, all layer)
-t = 14
-t2 = 2 * t - 1
-_bin = 20
-# _layer = 2
-# _head = 1
-# pi_qk = np.abs(pi)[_layer, _head, 1:, 1:].reshape(t, t, t, t)
+def plot_pi_qk_mean(pi, layers=11, heads=4, t=14, dig=False, bin=100):
+    pi_qk_mean = []
+    if isinstance(layers, int):
+        name = f'0-{layers}'
+        layers = list(range(layers))
+    else:
+        assert isinstance(layers, list)
+        name = '_'.join([str(v) for v in layers])
+    for li, l in enumerate(layers):
+        for h in range(heads):
+            _pi_qk = pi[l, h, 1:, 1:].reshape(t, t, t, t)
+            _pi_qk_mean = get_pi_qk_mean_stack(
+                _pi_qk,
+                dig=dig,
+                bin=bin,
+            )
+            pi_qk_mean.append(_pi_qk_mean)
+    
+    pi_qk_mean = np.stack(pi_qk_mean)
+    pi_qk_mean = np.clip(pi_qk_mean / np.percentile(pi_qk_mean, 99), 0, 1)
+    pi_qk_mean_img = img_concat(
+        pi_qk_mean,
+        col=heads,
+        sep=4,
+    )
+    pi_qk_mean_img.shape
 
-H = 4
-pi_qk_mean = []
-for l in range(11):
-    for h in range(H):
-        _pi_qk = pi[l, h, 1:, 1:].reshape(t, t, t, t)
-        _pi_qk_mean = get_pi_qk_mean_stack(
-            _pi_qk,
-            # dig=True,
-            dig=False,
-            bin=_bin,
-        )
-        pi_qk_mean.append(_pi_qk_mean)
-        
+    fig = px.imshow(
+        pi_qk_mean_img,
+        zmin=0,
+        zmax=1,
+        color_continuous_scale='viridis',
+    )
+    fig.update_traces(
+        # hovertemplate='x: %{x} <br> y: %{y} <br> z: %{z} <br> color: %{color}',
+        hoverongaps=False,
+    )
+    axes_dict = dict(
+        showticklabels=False,
+        showgrid=False,
+        zeroline=False,
+        showline=False,
+        # tick0=_sep,
+        # dtick=(t + _sep) + 1,
+        # tickwidth=0,
+        # # tickcolor='crimson',
+        # ticklen=0,
+        # gridwidth=4,
+        # gridcolor='white',
+    )
+    fig.update_xaxes(**axes_dict).update_yaxes(**axes_dict)
+    _scale = 4
+    fig.update_layout(
+        # template='plotly_dark',
+        margin=dict(l=0,r=0,t=0,b=0),
+        # height=640,
+        height=337 * _scale,
+        width=120 * _scale + 100,
+        plot_bgcolor='rgba(0,0,0,0)',
+    )
+    # fig = FF.format(
+    #     fig
+    # )
+    return fig
 
-pi_qk_mean = np.stack(pi_qk_mean)
-pi_qk_mean = np.clip(pi_qk_mean / np.percentile(pi_qk_mean, 99), 0, 1)
-pi_qk_mean_img = img_concat(
-    pi_qk_mean,
-    col=H,
-    sep=4,
-)
-pi_qk_mean_img.shape
-
-fig = px.imshow(
-    pi_qk_mean_img,
-    zmin=0,
-    zmax=1,
-    color_continuous_scale='viridis',
-)
-fig.update_traces(
-    # hovertemplate='x: %{x} <br> y: %{y} <br> z: %{z} <br> color: %{color}',
-    hoverongaps=False,
-)
-axes_dict = dict(
-    showticklabels=False,
-    showgrid=False,
-    zeroline=False,
-    showline=False,
-    # tick0=_sep,
-    # dtick=(t + _sep) + 1,
-    # tickwidth=0,
-    # # tickcolor='crimson',
-    # ticklen=0,
-    # gridwidth=4,
-    # gridcolor='white',
-)
-fig.update_xaxes(**axes_dict).update_yaxes(**axes_dict)
-_scale = 4
-fig.update_layout(
-    # template='plotly_dark',
-    margin=dict(l=0,r=0,t=0,b=0),
-    # height=640,
-    height=337 * _scale,
-    width=120 * _scale + 100,
-    plot_bgcolor='rgba(0,0,0,0)',
-)
-# fig = FF.format(
-#     fig
-# )
+fig = plot_pi_qk_mean(pi, 11, 4, 14, False)
 fig.show()
 fig.write_image('plots/pi_deit/deit_pi_qk_mean.png')
+
+readme_lines.extend([
+    f'> deit_pi_qk_mean',
+    '<p float="left" align="left">',
+    f'<img src="{"pi_deit/deit_pi_qk_mean.png"}" width="{image_width}" />',
+    '</p>',
+])
+
+# %% save README.md
+fp_rm = os.path.join(_dp_root, f'README.md')
+
+readme_txt = '\n\n'.join(readme_lines)
+
+with open(fp_rm, 'w') as fo:
+    fo.writelines(readme_txt)
+print(f'[PLOT] saved with README.md in <{_dp_root}>')
 
 
 # %% pi last cls
