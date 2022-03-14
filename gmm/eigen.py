@@ -421,7 +421,7 @@ figs_val = format_fig_dual_eigen(
 
 # %%
 FigFormat.save_plots_md(
-    dp='plots/eff_lm',
+    dp='plots/eigen_deit',
     begin_lines=[
         '# Plots and stuff',
         '## Plots deit eigen values',
