@@ -211,7 +211,7 @@ class FigFormat:
         
         for name, figd in kwargs.items():
             _lines = [
-                f'> {name}'
+                f'> {name}',
                 '<p float="left" align="left">',
             ]
             for _ver, _fig in figd.items():
@@ -313,7 +313,7 @@ FigFormat.save_plots_md(
         '# Plots and stuff',
         '## Plots LM Ratio',
     ],
-    image_width=200,
+    image_width=320,
     
     lm_ratio_flops={
         'clean': figs_flops[0],
