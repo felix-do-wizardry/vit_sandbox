@@ -273,3 +273,11 @@
 <img src="deit_pi_qk_mean.png" width="240" />
 
 </p>
+
+> deit_pi_qk_mean_0_2_4_6_8_10
+
+<p float="left" align="left">
+
+<img src="deit_pi_qk_mean_0_2_4_6_8_10.png" width="240" />
+
+</p>

@@ -560,6 +560,13 @@ def img_concat(imgs, col=None, row=None, sep=0, border=0, bg=None):
 # img_concat(a, col=3, sep=1)
 
 
+# %%
+_dp_root = os.path.join('plots', 'pi_deit')
+image_width = 240
+readme_lines = [
+    '## PLOTS',
+]
+
 # %% pi qk viz - centered
 t = 14
 t2 = 2 * t - 1
@@ -626,13 +633,6 @@ def plot_pi_qk_center(layer=0, head=0, with_q_grid=False):
         width=1000,
     )
     return fig
-
-# %%
-_dp_root = os.path.join('plots', 'pi_deit')
-image_width = 240
-readme_lines = [
-    '## PLOTS',
-]
 
 _name = f'deit_pi_qk_center'
 _dp = os.path.join(_dp_root, _name)
@@ -844,13 +844,14 @@ def plot_pi_qk_mean(pi, layers=11, heads=4, t=14, dig=False, bin=100):
         # gridcolor='white',
     )
     fig.update_xaxes(**axes_dict).update_yaxes(**axes_dict)
-    _scale = 4
+    _scale = 6
+    _layer_count = len(layers)
     fig.update_layout(
         # template='plotly_dark',
         margin=dict(l=0,r=0,t=0,b=0),
         # height=640,
-        height=337 * _scale,
-        width=120 * _scale + 100,
+        height=(_layer_count * 31 - 4) * _scale,
+        width=(heads * 31 - 4) * _scale + 100,
         plot_bgcolor='rgba(0,0,0,0)',
     )
     # fig = FF.format(
@@ -858,14 +859,28 @@ def plot_pi_qk_mean(pi, layers=11, heads=4, t=14, dig=False, bin=100):
     # )
     return fig
 
+# %%
+_name = f'deit_pi_qk_mean'
 fig = plot_pi_qk_mean(pi, 11, 4, 14, False)
 fig.show()
-fig.write_image('plots/pi_deit/deit_pi_qk_mean.png')
-
+fig.write_image(f'plots/pi_deit/{_name}.png')
 readme_lines.extend([
-    f'> deit_pi_qk_mean',
+    f'> {_name}',
     '<p float="left" align="left">',
-    f'<img src="{"deit_pi_qk_mean.png"}" width="{image_width}" />',
+    f'<img src="{f"{_name}.png"}" width="{image_width}" />',
+    '</p>',
+])
+
+# %%
+_layers = [0, 2, 4, 6, 8, 10]
+_name = f'deit_pi_qk_mean_{"_".join([str(v) for v in _layers])}'
+fig = plot_pi_qk_mean(pi, _layers, 4, 14, False)
+fig.show()
+fig.write_image(f'plots/pi_deit/{_name}.png')
+readme_lines.extend([
+    f'> {_name}',
+    '<p float="left" align="left">',
+    f'<img src="{f"{_name}.png"}" width="{image_width}" />',
     '</p>',
 ])
 
