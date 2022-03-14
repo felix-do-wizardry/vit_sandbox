@@ -616,7 +616,7 @@ def plot_pi_qk_center(layer=0, head=0):
 
 # %%
 _dp_root = os.path.join('plots', 'pi_deit')
-image_width = 256
+image_width = 240
 readme_lines = [
     '## PLOTS',
 ]
@@ -638,7 +638,7 @@ for _layer in range(11):
         )
     readme_lines.extend(['</p>'])
 
-fig.show()
+# fig.show()
 
 
 
@@ -734,7 +734,7 @@ for _layer in range(11):
         )
     readme_lines.extend(['</p>'])
 
-fig.show()
+# fig.show()
 
 
 
