@@ -284,6 +284,7 @@ figs_mem[0].show(), figs_mem[1].show()
 FigFormat.save_plots_md(
     dp='plots/eff_lm',
     begin_lines=['# Plots and stuff'],
+    image_width=256,
     lm_ratio_flops={
         'clean': figs_flops[0],
         'ref': figs_flops[1],
