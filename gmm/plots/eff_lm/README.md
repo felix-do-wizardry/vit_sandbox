@@ -1,33 +1,43 @@
 # Plots and stuff
 
-## Plots deit eigen values
+## Plots LM Ratio
 
-> deit_eigen_model
+> lm_ratio_flops
 
 <p float="left" align="left">
 
-<img src="clean/deit_eigen_model.png" width="320" />
+<img src="clean/lm_ratio_flops.png" width="320" />
 
-<img src="ref/deit_eigen_model.png" width="320" />
+<img src="ref/lm_ratio_flops.png" width="320" />
 
 </p>
 
-> deit_eigen_layer_65
+> lm_ratio_mem
 
 <p float="left" align="left">
 
-<img src="clean/deit_eigen_layer_65.png" width="320" />
+<img src="clean/lm_ratio_mem.png" width="320" />
 
-<img src="ref/deit_eigen_layer_65.png" width="320" />
+<img src="ref/lm_ratio_mem.png" width="320" />
 
 </p>
 
-> deit_eigen_val
+> lm_ratio_flops_block
 
 <p float="left" align="left">
 
-<img src="clean/deit_eigen_val.png" width="320" />
+<img src="clean/lm_ratio_flops_block.png" width="320" />
 
-<img src="ref/deit_eigen_val.png" width="320" />
+<img src="ref/lm_ratio_flops_block.png" width="320" />
+
+</p>
+
+> lm_ratio_mem_block
+
+<p float="left" align="left">
+
+<img src="clean/lm_ratio_mem_block.png" width="320" />
+
+<img src="ref/lm_ratio_mem_block.png" width="320" />
 
 </p>

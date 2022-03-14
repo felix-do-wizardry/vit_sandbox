@@ -255,7 +255,10 @@ df
 df_block
 
 # %%
+df = df[df['type_full'] == 'fiak_0.5_0.0'].copy(True)
+df_block = df_block[df_block['type_full'] == 'fiak_0.5_0.0'].copy(True)
 
+df_block
 
 # %% MODEL
 fig_flops = px.line(
