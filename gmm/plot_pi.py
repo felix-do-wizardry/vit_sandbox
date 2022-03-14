@@ -213,7 +213,7 @@ fig.show()
 
 # %%
 
-# %% pi viz
+# %% pi viz layers/heads
 layers = [0, 1, 2, 3, 9, 10]
 head_count = 4
 _bin = 32
@@ -282,15 +282,6 @@ def add_grid(a, col, row=None, grid_value=None, sep=1):
     )
     return d
 
-# _a = np.random.randint(10, size=[6, 6]).astype(float)
-# add_grid(
-#     _a,
-#     col=3,
-#     grid_value=None,
-#     sep=2,
-# )
-
-# %%
 def img_concat(imgs, col=None, row=None, sep=0, border=0, bg=None):
     assert len(imgs.shape) >= 3
     _imgs = imgs
@@ -333,58 +324,58 @@ def img_concat(imgs, col=None, row=None, sep=0, border=0, bg=None):
 # a = np.random.randint(10, size=[6, 2, 2]).astype(float)
 # img_concat(a, col=3, sep=1)
 
-# %% pi q k pair viz
-t = 14
-_bin = 100
-_layer = 2
-_head = 2
-pi_qk = np.abs(pi)[_layer, _head, 1:, 1:].reshape(t, t, t, t)
+# %% pi qk viz (plain)
+# t = 14
+# _bin = 100
+# _layer = 2
+# _head = 2
+# pi_qk = np.abs(pi)[_layer, _head, 1:, 1:].reshape(t, t, t, t)
 
-pi_qk_dig = np.digitize(
-    pi_qk,
-    np.percentile(
-        pi_qk,
-        np.linspace(0, 100, _bin + 1)[1:-1]
-    ),
-).astype(float)
-pi_qk_dig_t = pi_qk_dig.transpose(0, 2, 1, 3)
-pi_qk_dig_t_flat = pi_qk_dig_t.reshape(t*t, t*t)
-pi_qk.shape, pi_qk_dig_t.shape, pi_qk_dig_t_flat.shape
+# pi_qk_dig = np.digitize(
+#     pi_qk,
+#     np.percentile(
+#         pi_qk,
+#         np.linspace(0, 100, _bin + 1)[1:-1]
+#     ),
+# ).astype(float)
+# pi_qk_dig_t = pi_qk_dig.transpose(0, 2, 1, 3)
+# pi_qk_dig_t_flat = pi_qk_dig_t.reshape(t*t, t*t)
+# pi_qk.shape, pi_qk_dig_t.shape, pi_qk_dig_t_flat.shape
+
+# # %%
+# _pi_qk_img_flat_dig = add_grid(
+#     pi_qk_dig_t_flat,
+#     col=14,
+#     row=14,
+#     grid_value=None,
+#     sep=1,
+# )
+# fig = px.imshow(
+#     _pi_qk_img_flat_dig,
+# )
+
+# fig.update_xaxes(showticklabels=False)
+# fig.update_yaxes(showticklabels=False)
+# fig.update_layout(
+#     template='plotly_dark',
+#     margin=dict(l=0,r=0,t=20,b=0),
+#     # height=640,
+#     height=800,
+#     width=1000,
+# )
+# fig.show()
 
 # %%
-_pi_qk_img_flat_dig = add_grid(
-    pi_qk_dig_t_flat,
-    col=14,
-    row=14,
-    grid_value=None,
-    sep=1,
-)
-fig = px.imshow(
-    _pi_qk_img_flat_dig,
-)
-
-fig.update_xaxes(showticklabels=False)
-fig.update_yaxes(showticklabels=False)
-fig.update_layout(
-    template='plotly_dark',
-    margin=dict(l=0,r=0,t=20,b=0),
-    # height=640,
-    height=800,
-    width=1000,
-)
-fig.show()
-
-# %%
 
 
 
 
-# %% pi q k pair viz - centered
+# %% pi qk viz - centered
 t = 14
 t2 = 2 * t - 1
 _bin = 100
-_layer = 10
-_head = 0
+_layer = 4
+_head = 1
 pi_qk = np.abs(pi)[_layer, _head, 1:, 1:].reshape(t, t, t, t)
 pi_qk_dig = np.digitize(
     pi_qk,
@@ -450,8 +441,113 @@ fig.update_layout(
 )
 fig.show()
 
+# %%
+
+
+
+
+
+# %% pi qk viz - mean q
+def get_pi_qk_mean_stack(
+            pi_qk,
+            dig=True,
+            bin=100,
+            plot=False,
+            mask_min=1,
+            ):
+    _shape = pi_qk.shape
+    assert len(_shape) == 4
+    assert _shape[0] == _shape[1] == _shape[2] == _shape[3]
+    
+    pi_qk_mean = np.zeros([t * 2 - 1, t * 2 - 1], dtype=np.float32)
+    pi_qk_mean_mask = np.zeros([t * 2 - 1, t * 2 - 1], dtype=np.int32)
+    for qy in range(t):
+        for qx in range(t):
+            cy = t - 1 - qy
+            cx = t - 1 - qx
+            pi_qk_mean[
+                cy : cy + t,
+                cx : cx + t,
+            ] += pi_qk[qy, qx]
+            pi_qk_mean_mask[
+                cy : cy + t,
+                cx : cx + t,
+            ] += 1
+    
+    pi_qk_mean = pi_qk_mean / np.clip(pi_qk_mean_mask, mask_min, t*t)
+    r = pi_qk_mean
+    if dig:
+        pi_qk_mean_dig = np.digitize(
+            pi_qk_mean,
+            np.percentile(pi_qk_mean, np.linspace(0, 100, bin+1)[1:-1]),
+        )
+        r = pi_qk_mean_dig
+    if plot:
+        # px.imshow(pi_qk_mean, template='plotly_dark')
+        # px.imshow(pi_qk_mean_dig, template='plotly_dark')
+        fig = px.imshow(r, template='plotly_dark')
+        fig.show()
+    return r
 
 # %%
+t = 14
+t2 = 2 * t - 1
+_bin = 100
+_layer = 2
+_head = 1
+pi_qk = np.abs(pi)[_layer, _head, 1:, 1:].reshape(t, t, t, t)
+
+H = 4
+pi_qk_mean_digs = []
+for l in range(11):
+    for h in range(H):
+        _pi_qk = np.abs(pi)[l, h, 1:, 1:].reshape(t, t, t, t)
+        pi_qk_mean_dig = get_pi_qk_mean_stack(
+            _pi_qk,
+            dig=True,
+        )
+        pi_qk_mean_digs.append(pi_qk_mean_dig)
+        # fig = px.imshow(pi_qk_mean_dig, template='plotly_dark')
+
+
+pi_qk_mean_digs = np.stack(pi_qk_mean_digs)
+pi_qk_mean_digs_img = img_concat(
+    pi_qk_mean_digs,
+    col=H,
+    sep=4,
+)
+pi_qk_mean_digs_img.shape
+
+fig = px.imshow(
+    pi_qk_mean_digs_img,
+)
+fig.update_traces(
+    # hovertemplate='x: %{x} <br> y: %{y} <br> z: %{z} <br> color: %{color}',
+    hoverongaps=False,
+)
+axes_dict = dict(
+    showticklabels=False,
+    # tick0=_sep,
+    # dtick=(t + _sep) + 1,
+    # tickwidth=0,
+    # # tickcolor='crimson',
+    # ticklen=0,
+    # gridwidth=4,
+    # gridcolor='white',
+)
+fig.update_xaxes(**axes_dict).update_yaxes(**axes_dict)
+fig.update_layout(
+    # template='plotly_dark',
+    margin=dict(l=0,r=0,t=0,b=0),
+    # height=640,
+    height=337 * 2,
+    width=120 * 2 + 100,
+)
+fig.show()
+fig.write_image('plots/deit_pi_qk_mean.png')
+
+
+# %% pi last cls
 # pi_qk = np.abs(pi)[-1, _head, 1:, 1:].reshape(t, t, t, t)
 # pi_qk.shape
 # pi_qk[]
@@ -464,7 +560,6 @@ b = img_concat(
 )
 
 px.imshow(b, height=800, template='plotly_dark')
-
 
 
 # %%
