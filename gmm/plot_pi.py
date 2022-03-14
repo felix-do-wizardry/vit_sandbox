@@ -539,16 +539,17 @@ axes_dict = dict(
     # gridcolor='white',
 )
 fig.update_xaxes(**axes_dict).update_yaxes(**axes_dict)
+_scale = 4
 fig.update_layout(
     # template='plotly_dark',
     margin=dict(l=0,r=0,t=0,b=0),
     # height=640,
-    height=337 * 2,
-    width=120 * 2 + 100,
+    height=337 * _scale,
+    width=120 * _scale + 100,
     plot_bgcolor='rgba(0,0,0,0)',
 )
 fig.show()
-# fig.write_image('plots/deit_pi_qk_mean.png')
+fig.write_image('plots/deit_pi_qk_mean.png')
 
 
 # %% pi last cls
