@@ -483,7 +483,16 @@ fig.show()
 # %%
 
 
-# %%
+
+
+
+
+
+
+
+
+
+# %% MAIN PLOTS
 def add_grid(a, col, row=None, grid_value=None, sep=1):
     if row is None:
         row = col
@@ -558,7 +567,7 @@ _bin = 100
 _layer = 5
 _head = 2
 
-def plot_pi_qk_center(layer=0, head=0):
+def plot_pi_qk_center(layer=0, head=0, with_q_grid=False):
     pi_qk = np.abs(pi)[layer, head, 1:, 1:].reshape(t, t, t, t)
     pi_qk_dig = np.digitize(
         pi_qk,
@@ -603,10 +612,14 @@ def plot_pi_qk_center(layer=0, head=0):
         ticklen=0,
         gridwidth=4,
         gridcolor='white',
+        
+        showgrid=bool(with_q_grid),
+        zeroline=False, # thick line at x=0
+        visible=False,  # numbers below
     )
     fig.update_xaxes(**axes_dict).update_yaxes(**axes_dict)
     fig.update_layout(
-        template='plotly_dark',
+        # template='plotly_dark',
         margin=dict(l=0,r=0,t=20,b=0),
         # height=640,
         height=800,
@@ -649,7 +662,7 @@ _bin = 100
 # _layer = 5
 # _head = 2
 
-def plot_pi_qk_mask(layer=0, head=0, prune=0.7):
+def plot_pi_qk_mask(layer=0, head=0, prune=0.7, with_q_grid=False):
     pi_mask = np.digitize(
         pi,
         np.percentile(pi, [prune * 100]),
@@ -694,10 +707,14 @@ def plot_pi_qk_mask(layer=0, head=0, prune=0.7):
         gridwidth=4,
         gridcolor='white',
         # gridcolor='rgba(0,0,0,0)',
+        
+        showgrid=bool(with_q_grid),
+        zeroline=False, # thick line at x=0
+        visible=False,  # numbers below
     )
     fig.update_xaxes(**axes_dict).update_yaxes(**axes_dict)
     fig.update_layout(
-        template='plotly_dark',
+        # template='plotly_dark',
         margin=dict(l=0,r=0,t=20,b=0),
         # height=640,
         height=800,
@@ -831,6 +848,9 @@ def plot_pi_qk_mean(pi, layers=11, heads=4, t=14, dig=False, bin=100):
         # ticklen=0,
         # gridwidth=4,
         # gridcolor='white',
+        showgrid=False,
+        zeroline=False, # thick line at x=0
+        visible=False,  # numbers below
     )
     fig.update_xaxes(**axes_dict).update_yaxes(**axes_dict)
     _scale = 4
