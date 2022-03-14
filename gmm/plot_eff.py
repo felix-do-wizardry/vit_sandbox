@@ -101,14 +101,18 @@ class FigFormat:
             **axes,
         )
         
-        if with_line:
-            fig.update_traces(
-                line=dict(width=self.size['line']),
-            )
-        if with_marker:
-            fig.update_traces(
-                marker=dict(size=self.size['marker'], symbol='square'),
-            )
+        fig.update_traces(
+            line=dict(width=self.size['line']),
+            marker=dict(size=self.size['marker'], symbol='square'),
+        )
+        # if with_line:
+        #     fig.update_traces(
+        #         line=dict(width=self.size['line']),
+        #     )
+        # if with_marker:
+        #     fig.update_traces(
+        #         marker=dict(size=self.size['marker'], symbol='square'),
+        #     )
                 
         
         legend_margin = 0.02
@@ -259,8 +263,10 @@ fig_flops = px.line(
     x='seq_len_str',
     y='flop',
     color='type_full',
+    markers=True,
 )
-figs_flops = FF.format_dual(fig_flops, y_title='FLOPS Ratio',)
+figs_flops = FF.format_dual(
+    fig_flops, y_title='FLOPS Ratio')
 figs_flops[0].show(), figs_flops[1].show()
 
 # %%
@@ -269,6 +275,7 @@ fig_mem = px.line(
     x='seq_len_str',
     y='mem',
     color='type_full',
+    markers=True,
 )
 figs_mem = FF.format_dual(
     fig_mem,
@@ -287,6 +294,7 @@ fig_flops_block = px.line(
     x='seq_len_str',
     y='flop',
     color='type_full',
+    markers=True,
 )
 figs_flops_block = FF.format_dual(fig_flops_block, y_title='FLOPS Ratio',)
 figs_flops_block[0].show(), figs_flops_block[1].show()
@@ -297,6 +305,7 @@ fig_mem_block = px.line(
     x='seq_len_str',
     y='mem',
     color='type_full',
+    markers=True,
 )
 figs_mem_block = FF.format_dual(
     fig_mem_block,
