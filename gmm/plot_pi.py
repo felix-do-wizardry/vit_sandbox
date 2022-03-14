@@ -527,6 +527,9 @@ fig.update_traces(
 )
 axes_dict = dict(
     showticklabels=False,
+    showgrid=False,
+    zeroline=False,
+    showline=False,
     # tick0=_sep,
     # dtick=(t + _sep) + 1,
     # tickwidth=0,
@@ -542,9 +545,10 @@ fig.update_layout(
     # height=640,
     height=337 * 2,
     width=120 * 2 + 100,
+    plot_bgcolor='rgba(0,0,0,0)',
 )
 fig.show()
-fig.write_image('plots/deit_pi_qk_mean.png')
+# fig.write_image('plots/deit_pi_qk_mean.png')
 
 
 # %% pi last cls
