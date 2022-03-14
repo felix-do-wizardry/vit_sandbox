@@ -841,16 +841,7 @@ def plot_pi_qk_mean(pi, layers=11, heads=4, t=14, dig=False, bin=100):
         showgrid=False,
         zeroline=False,
         showline=False,
-        # tick0=_sep,
-        # dtick=(t + _sep) + 1,
-        # tickwidth=0,
-        # # tickcolor='crimson',
-        # ticklen=0,
-        # gridwidth=4,
         # gridcolor='white',
-        showgrid=False,
-        zeroline=False, # thick line at x=0
-        visible=False,  # numbers below
     )
     fig.update_xaxes(**axes_dict).update_yaxes(**axes_dict)
     _scale = 4

@@ -169,21 +169,25 @@ class FigFormat:
         fig_ref = go.Figure(fig)
         fig_clean = self.format(
             fig_clean,
-            x_title='',
-            y_title='',
-            legend_title='',
             # corner='tr',
             # axis_angle=90,
-            showlegend=False,
             **{
-                k: v
-                for k, v in kwargs.items()
-                if k in [
-                    'x_dtick', 'y_dtick',
-                    'axis_angle',
-                    'with_line', 'with_marker',
-                ]
+                **kwargs,
+                'x_title': '',
+                'y_title': '',
+                'legend_title': '',
+                'showlegend': False,
             },
+            # **{
+            #     k: v
+            #     for k, v in kwargs.items()
+            #     if k in [
+            #         'x_dtick', 'y_dtick',
+            #         'axis_angle',
+            #         'with_line', 'with_marker',
+            #         'bargap',
+            #     ]
+            # },
         )
         fig_ref = self.format(
             fig_ref,
@@ -191,9 +195,52 @@ class FigFormat:
         )
         return fig_clean, fig_ref
     
-    # def format_log(self, fig, **kwargs):
-    #     if isinstance(fig, tuple):
-    #         return tuple([self.format_log()])
+    @classmethod
+    def save_plots_md(cls,
+                dp='./plots',
+                begin_lines=[],
+                image_width=400,
+                **kwargs,
+                ):
+        # kwargs is a dict of dict of figs
+        fp_rm = os.path.join(dp, f'README.md')
+        readme_lines = [
+            # '# Model Metrics Plot for gmm deit',
+            # '## PLOTS',
+            *begin_lines,
+        ]
+        # image_width = 320
+        # image_cols = 4
+        
+        for name, figd in kwargs.items():
+            _lines = [
+                f'> {name}',
+                '<p float="left" align="left">',
+            ]
+            for _ver, _fig in figd.items():
+                _fp_rel = f'{_ver}/{name}.png'
+                _fp = os.path.join(dp, _fp_rel)
+                _dp_ver = os.path.join(dp, _ver)
+                if not os.path.isdir(_dp_ver):
+                    os.makedirs(_dp_ver)
+                
+                _fig.write_image(_fp)
+                
+                _lines.extend([
+                    f'<img src="{_fp_rel}" width="{image_width}" />',
+                    # f'<img src="ref/{name}.png" width="{image_width}" />',
+                ])
+            _lines.extend([
+                '</p>',
+            ])
+            readme_lines.extend(_lines)
+        
+        readme_txt = '\n\n'.join(readme_lines)
+
+        with open(fp_rm, 'w') as fo:
+            fo.writelines(readme_txt)
+        print(f'[PLOT] saved with README.md in <{dp}>')
+
 
 
 FF = FigFormat(
@@ -320,9 +367,10 @@ _mask = np.all([
         for _layer in layers
     ], axis=0),
 ], axis=0)
+print(names[_model_index])
 
 _df = df_ene[_mask]
-fig_ene = px.line(
+fig_layer = px.line(
     _df,
     x='index',
     y='energy',
@@ -332,9 +380,9 @@ fig_ene = px.line(
     # x=np.arange(_limit) + 1,
     # log_x=True,
 )
-fig_ene
-figs_ene = format_fig_dual_eigen(
-    fig_ene,
+fig_layer
+figs_layer = format_fig_dual_eigen(
+    fig_layer,
     1,
     axis_angle=0,
     y_title='Cumulative Eigen Energy',
@@ -371,6 +419,30 @@ figs_val = format_fig_dual_eigen(
 
 # %%
 
+# %%
+FigFormat.save_plots_md(
+    dp='plots/eff_lm',
+    begin_lines=[
+        '# Plots and stuff',
+        '## Plots deit eigen values',
+    ],
+    image_width=320,
+    
+    deit_eigen_model={
+        'clean': figs_model[0],
+        'ref': figs_model[1],
+    },
+    
+    deit_eigen_layer_65={
+        'clean': figs_layer[0],
+        'ref': figs_layer[1],
+    },
+    
+    deit_eigen_val={
+        'clean': figs_val[0],
+        'ref': figs_val[1],
+    },
+)
 
 
 
