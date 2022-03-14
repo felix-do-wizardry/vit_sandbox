@@ -243,23 +243,23 @@ FF = FigFormat(fig_size=[800, 800],)
 FF
 
 # %%
-fp_csv = 'efficiency/MEMORY_FLOPS.csv'
-
-# %%
-df = pd.read_csv(fp_csv)
+df = pd.read_csv('efficiency/MEMORY_FLOPS.csv')
+df_block = pd.read_csv('efficiency/MEMORY_FLOPS_BLOCK.csv')
 df['seq_len_str'] = [str(v) for v in df['seq_len']]
+df_block['seq_len_str'] = [str(v) for v in df_block['seq_len']]
 df
+df_block
 
 # %%
+
+
+# %% MODEL
 fig_flops = px.line(
     df,
     x='seq_len_str',
     y='flop',
     color='type_full',
-    
 )
-fig_flops
-
 figs_flops = FF.format_dual(fig_flops, y_title='FLOPS Ratio',)
 figs_flops[0].show(), figs_flops[1].show()
 
@@ -270,8 +270,6 @@ fig_mem = px.line(
     y='mem',
     color='type_full',
 )
-fig_mem
-
 figs_mem = FF.format_dual(
     fig_mem,
     y_title='Memory Ratio',
@@ -279,12 +277,41 @@ figs_mem = FF.format_dual(
 )
 figs_mem[0].show(), figs_mem[1].show()
 
+# %%
+
+
+
+# %% BLOCK
+fig_flops_block = px.line(
+    df_block,
+    x='seq_len_str',
+    y='flop',
+    color='type_full',
+)
+figs_flops_block = FF.format_dual(fig_flops_block, y_title='FLOPS Ratio',)
+figs_flops_block[0].show(), figs_flops_block[1].show()
+
+# %%
+fig_mem_block = px.line(
+    df_block,
+    x='seq_len_str',
+    y='mem',
+    color='type_full',
+)
+figs_mem_block = FF.format_dual(
+    fig_mem_block,
+    y_title='Memory Ratio',
+    y_dtick=0.1,
+)
+figs_mem_block[0].show(), figs_mem_block[1].show()
+
 
 # %%
 FigFormat.save_plots_md(
     dp='plots/eff_lm',
     begin_lines=['# Plots and stuff'],
     image_width=256,
+    
     lm_ratio_flops={
         'clean': figs_flops[0],
         'ref': figs_flops[1],
@@ -292,6 +319,15 @@ FigFormat.save_plots_md(
     lm_ratio_mem={
         'clean': figs_mem[0],
         'ref': figs_mem[1],
+    },
+    
+    lm_ratio_flops_block={
+        'clean': figs_flops_block[0],
+        'ref': figs_flops_block[1],
+    },
+    lm_ratio_mem_block={
+        'clean': figs_mem_block[0],
+        'ref': figs_mem_block[1],
     },
 )
 
