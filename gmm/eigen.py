@@ -1,4 +1,5 @@
 # %%
+import enum
 import numpy as np
 import json
 import os, sys, time
@@ -340,6 +341,17 @@ df_ene_model = pd.DataFrame([
 ])
 df_ene_model
 
+
+
+
+
+
+
+
+# %% PLOT MAIN
+_plots = {}
+
+
 # %% MODEL
 fig_model = px.line(
     df_ene_model,
@@ -356,68 +368,88 @@ figs_model = format_fig_dual_eigen(
     x_title='# Eigen Values',
     legend_title='Model',
 )
+_plots['deit_eigen_model'] = {
+    'clean': figs_model[0],
+    'ref': figs_model[1],
+}
 
 # %% 
-_model_index = 0
 layers = [0, 1, 9, 10]
-_mask = np.all([
-    df_ene['model_index'] == _model_index,
-    np.sum([
-        df_ene['layer'] == _layer
-        for _layer in layers
-    ], axis=0),
-], axis=0)
-print(names[_model_index])
+# _model_index = 0
 
-_df = df_ene[_mask]
-fig_layer = px.line(
-    _df,
-    x='index',
-    y='energy',
-    color='layer',
-    hover_data=['model'],
-    # y=a_ene[:_limit],
-    # x=np.arange(_limit) + 1,
-    # log_x=True,
-)
-fig_layer
-figs_layer = format_fig_dual_eigen(
-    fig_layer,
-    1,
-    axis_angle=0,
-    y_title='Cumulative Eigen Energy',
-    x_title='# Eigen Values',
-    legend_title='Layer',
-)
+for z, name in enumerate(names):
+    _mask = np.all([
+        df_ene['model_index'] == z,
+        np.sum([
+            df_ene['layer'] == _layer
+            for _layer in layers
+        ], axis=0),
+    ], axis=0)
+    print(name)
+
+    _df = df_ene[_mask]
+    fig_layer = px.line(
+        _df,
+        x='index',
+        y='energy',
+        color='layer',
+        hover_data=['model'],
+        # y=a_ene[:_limit],
+        # x=np.arange(_limit) + 1,
+        # log_x=True,
+    )
+    fig_layer
+    figs_layer = format_fig_dual_eigen(
+        fig_layer,
+        1,
+        axis_angle=0,
+        y_title='Cumulative Eigen Energy',
+        x_title='# Eigen Values',
+        legend_title='Layer',
+    )
+    
+    _plots[f'deit_eigen_layer_{name}'] = {
+        'clean': figs_layer[0],
+        'ref': figs_layer[1],
+    }
+
 
 
 # %%
-_model_index = 0
+
+
+
+
+# %%
 _limit2 = 50
+# _model_index = 0
 # layers = [0, 1, 9, 10]
-eigen_mean = np.mean(eigen_datas[_model_index, :, ::-1][:, :_limit2], axis=0)
-eigen_mean.shape
 
-fig_val = px.bar(
-    y=eigen_mean,
-    x=np.arange(eigen_mean.shape[0]) + 1,
-)
+for z, name in enumerate(names):
+    eigen_mean = np.mean(eigen_datas[z, :, ::-1][:, :_limit2], axis=0)
+    eigen_mean.shape
 
-figs_val = format_fig_dual_eigen(
-    fig_val,
-    1,
-    axis_angle=0,
-    y_title='Eigen Value',
-    x_title='Eigen Values #',
-    # legend_title='Layer',
-    with_line=False,
-    with_marker=False,
-    bargap=0.,
-)
+    fig_val = px.bar(
+        y=eigen_mean,
+        x=np.arange(eigen_mean.shape[0]) + 1,
+    )
 
+    figs_val = format_fig_dual_eigen(
+        fig_val,
+        1,
+        axis_angle=0,
+        y_title='Eigen Value',
+        x_title='Eigen Values #',
+        # legend_title='Layer',
+        with_line=False,
+        with_marker=False,
+        bargap=0.,
+    )
+    _plots[f'deit_eigen_val_{name}'] = {
+        'clean': figs_val[0],
+        'ref': figs_val[1],
+    }
 
-
-# %%
 
 # %%
 FigFormat.save_plots_md(
@@ -428,20 +460,23 @@ FigFormat.save_plots_md(
     ],
     image_width=320,
     
-    deit_eigen_model={
-        'clean': figs_model[0],
-        'ref': figs_model[1],
-    },
+    **_plots,
     
-    deit_eigen_layer_65={
-        'clean': figs_layer[0],
-        'ref': figs_layer[1],
-    },
+    # deit_eigen_model={
+    #     'clean': figs_model[0],
+    #     'ref': figs_model[1],
+    # },
     
-    deit_eigen_val={
-        'clean': figs_val[0],
-        'ref': figs_val[1],
-    },
+    # deit_eigen_layer_65={
+    #     'clean': figs_layer[0],
+    #     'ref': figs_layer[1],
+    # },
+    
+    # deit_eigen_val={
+    #     'clean': figs_val[0],
+    #     'ref': figs_val[1],
+    # },
+    
 )
 
 
