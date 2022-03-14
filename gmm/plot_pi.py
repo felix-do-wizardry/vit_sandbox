@@ -854,7 +854,7 @@ fig.write_image('plots/pi_deit/deit_pi_qk_mean.png')
 readme_lines.extend([
     f'> deit_pi_qk_mean',
     '<p float="left" align="left">',
-    f'<img src="{"pi_deit/deit_pi_qk_mean.png"}" width="{image_width}" />',
+    f'<img src="{"deit_pi_qk_mean.png"}" width="{image_width}" />',
     '</p>',
 ])
 

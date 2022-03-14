@@ -270,6 +270,6 @@
 
 <p float="left" align="left">
 
-<img src="pi_deit/deit_pi_qk_mean.png" width="240" />
+<img src="deit_pi_qk_mean.png" width="240" />
 
 </p>
