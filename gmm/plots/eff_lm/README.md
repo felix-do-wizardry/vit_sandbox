@@ -1,5 +1,7 @@
 # Plots and stuff
 
+## Plots LM Ratio
+
 > lm_ratio_flops<p float="left" align="left">
 
 <img src="clean/lm_ratio_flops.png" width="200" />

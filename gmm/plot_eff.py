@@ -309,7 +309,10 @@ figs_mem_block[0].show(), figs_mem_block[1].show()
 # %%
 FigFormat.save_plots_md(
     dp='plots/eff_lm',
-    begin_lines=['# Plots and stuff'],
+    begin_lines=[
+        '# Plots and stuff',
+        '## Plots LM Ratio',
+    ],
     image_width=200,
     
     lm_ratio_flops={
