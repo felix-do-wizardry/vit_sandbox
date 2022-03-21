@@ -12,6 +12,7 @@ Notes:
 
 Baseline:
 - deit_base_patch16_224 - acc 81.8% / 95.6%
+- deit_small_patch16_224 - acc 79.9% / 95.0%
 - head = 12
 - batch_size = 256 x 4 = 1024
 
@@ -22,20 +23,20 @@ Fish++:
 - pi projection: 3 -> 12
 - non-linear = True/False
 
-> deitB_p16_224_baseline_bs256x4
+> deitS_p16_224_baseline_bs256x4
 ```bash
 python -m torch.distributed.launch --nproc_per_node=4 --use_env main.py \
-    --model deit_base_patch16_224 \
+    --model deit_small_patch16_224 \
     --batch-size 256 \
     --data-path /host/ubuntu/data/imagenet2012 \
     --output_dir /host/ubuntu/vision/fishpp \
     --accumulation_steps 1
 ```
 
-> deitB_p16_224_fishpp_hl2_bs256x4
+> deitS_p16_224_fishpp_hl2_bs256x4
 ```bash
 CUDA_VISIBLE_DEVICES=2,3 python -m torch.distributed.launch --nproc_per_node=2 --use_env main.py \
-    --model deit_base_patch16_224 --batch-size 256 \
+    --model deit_small_patch16_224 --batch-size 256 \
     --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
     --fishpp 1 --fish_global_heads 1 --fish_mask_type dist --fish_mask_levels 3 \
     --fish_non_linear 0 --fish_non_linear_bias 0 --fish_global_full_proj 1

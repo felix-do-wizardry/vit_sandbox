@@ -7,6 +7,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import time, os, json
 
+from draft import NumpyImage, ImageReadme
+
 # %%
 
 # %%
@@ -488,10 +490,6 @@ fig.show()
 
 
 
-
-
-
-
 # %% MAIN PLOTS
 def add_grid(a, col, row=None, grid_value=None, sep=1):
     if row is None:
@@ -518,7 +516,29 @@ def add_grid(a, col, row=None, grid_value=None, sep=1):
     return d
 
 def img_concat(imgs, col=None, row=None, sep=0, border=0, bg=None):
+    if isinstance(imgs, list):
+        _count = len(imgs)
+        assert len(imgs) > 0
+        assert all([isinstance(v, np.ndarray) for v in imgs])
+        assert all([len(v.shape) == len(list(imgs[0].shape)) for v in imgs[1:]])
+        _shapes = np.array([v.shape for v in imgs]).astype(int)
+        _shape = np.max(_shapes, axis=0)
+        _pads = _shape[None] - _shapes
+        _pads0 = np.floor(_pads / 2).astype(int)
+        _pads1 = _pads - _pads0
+        _pads_width = np.stack([_pads0, _pads1], axis=2)
+        imgs_pad = [
+            np.pad(
+                _img,
+                _pads_width[i],
+                constant_values=bg,
+            )
+            for i, _img in enumerate(imgs)
+        ]
+        imgs = np.stack(imgs_pad, 0)
+    assert isinstance(imgs, np.ndarray)
     assert len(imgs.shape) >= 3
+    assert imgs.shape[0] >= 1
     _imgs = imgs
     if len(imgs.shape) > 3:
         _imgs = imgs.reshape(-1, *imgs.shape[-2:])
@@ -556,8 +576,74 @@ def img_concat(imgs, col=None, row=None, sep=0, border=0, bg=None):
             ] = _imgs[gi]
     return _img
 
-# a = np.random.randint(10, size=[6, 2, 2]).astype(float)
-# img_concat(a, col=3, sep=1)
+# %%
+df = pd.DataFrame(
+    columns=['v'],
+    data=np.mean(np.random.sample([2000, 2000]) <= 0.5, axis=-1).reshape(-1, 1),
+)
+fig0 = px.histogram(
+    df,
+    x='v',
+    template='plotly_dark',
+)
+fig0
+
+# %%
+# df_gm = px.data.gapminder().query("country in ['Canada', 'Botswana']")
+# df_gm = px.data.gapminder().query("continent == 'Oceania'")
+df_gm = px.data.gapminder().query("country in ['Canada', 'United States', 'Austria', 'Belgium']")
+# df_gm = px.data.gapminder().query("continent == 'Americas'")
+
+fig_gap_gdp_life = px.line(df_gm, x="lifeExp", y="gdpPercap", color="country", text="year")
+fig_gap_gdp_life.update_traces(textposition="bottom right")
+# fig_gap_gdp_life.show()
+
+fig_gap_life = px.line(df_gm, x='year', y='lifeExp', color='country', symbol="country")
+# fig_gap_life.show()
+
+fig_gap_pop = px.line(df_gm, x='year', y='pop', color='country', symbol="country")
+# fig_gap_pop.show()
+
+for _fig in [fig_gap_gdp_life, fig_gap_life, fig_gap_pop]:
+    _fig.update_layout(template='plotly_dark')
+    _fig.show()
+
+# %%
+df_stock = px.data.stocks()
+fig_stock = px.line(df_stock, x='date', y=["GOOG", 'AAPL', 'AMZN'])
+fig_stock.update_layout(template='plotly_dark')
+fig_stock.show()
+
+# %%
+IR = ImageReadme(image_width=240, begin_lines=[], dp='./plots/test_ir')
+
+IR.save_figs(
+    section='random',
+    group='hist',
+    sub_dir='hist',
+    hist=fig0,
+)
+IR.save_figs(
+    section='gapminder',
+    group='correl',
+    sub_dir='correl',
+    gap_gdp_life=fig_gap_gdp_life,
+)
+IR.save_figs(
+    section='gapminder',
+    group='year',
+    sub_dir='year',
+    gap_life=fig_gap_life,
+    gap_pop=fig_gap_pop,
+)
+IR.save_figs(
+    section='stock',
+    group='time',
+    sub_dir='time',
+    stock=fig_stock,
+)
+IR.save_readme()
+IR
 
 
 # %%
@@ -762,6 +848,7 @@ def get_pi_qk_mean_stack(
             bin=100,
             plot=False,
             mask_min=1,
+            t=14,
             ):
     _shape = pi_qk.shape
     assert len(_shape) == 4
@@ -788,7 +875,7 @@ def get_pi_qk_mean_stack(
         pi_qk_mean_dig = np.digitize(
             pi_qk_mean,
             np.percentile(pi_qk_mean, np.linspace(0, 100, bin+1)[1:-1]),
-        ) / _bin
+        ) / bin
         r = pi_qk_mean_dig
     if plot:
         # px.imshow(pi_qk_mean, template='plotly_dark')
@@ -814,6 +901,7 @@ def plot_pi_qk_mean(pi, layers=11, heads=4, t=14, dig=False, bin=100):
                 _pi_qk,
                 dig=dig,
                 bin=bin,
+                t=t,
             )
             pi_qk_mean.append(_pi_qk_mean)
     
@@ -861,7 +949,7 @@ def plot_pi_qk_mean(pi, layers=11, heads=4, t=14, dig=False, bin=100):
 
 # %%
 _name = f'deit_pi_qk_mean'
-fig = plot_pi_qk_mean(pi, 11, 4, 14, False)
+fig = plot_pi_qk_mean(pi, layers=11, heads=4, t=14, dig=False, bin=100)
 fig.show()
 fig.write_image(f'plots/pi_deit/{_name}.png')
 readme_lines.extend([
@@ -870,6 +958,11 @@ readme_lines.extend([
     f'<img src="{f"{_name}.png"}" width="{image_width}" />',
     '</p>',
 ])
+
+# %%
+fig = plot_pi_qk_mean(pi, layers=11, heads=4, t=14, dig=True, bin=100)
+fig.show()
+
 
 # %%
 _layers = [0, 2, 4, 6, 8, 10]
@@ -893,6 +986,71 @@ with open(fp_rm, 'w') as fo:
     fo.writelines(readme_txt)
 print(f'[PLOT] saved with README.md in <{_dp_root}>')
 
+
+# %%
+def scale_map(a, range=(0, 1), axis=None):
+    _min = np.min(a, axis=axis, keepdims=True)
+    _max = np.max(a, axis=axis, keepdims=True)
+    b = (a - _min) / np.clip(_max - _min, 0.000000001, None)
+    return b * (range[1] - range[0]) + range[0]
+
+# %% pi all cls
+H = 4
+pi_cls_q = pi[:, :, 0, 1:].reshape(-1, 14, 14)
+pi_cls_k = pi[:, :, 1:, 0].reshape(-1, 14, 14)
+
+# pi_cls_qk = pi[:, :, 0, 0]
+# pi_cls_q.shape, pi_cls_k.shape, pi_cls_qk.shape
+
+# pi_cls_q = pi_cls_q / np.max(pi_cls_q, axis=0, keepdims=True)
+# pi_cls_k = pi_cls_k / np.max(pi_cls_k, axis=0, keepdims=True)
+
+pi_cls_q = scale_map(pi_cls_q, range=(0, 1), axis=(1, 2))
+pi_cls_k = scale_map(pi_cls_k, range=(0, 1), axis=(1, 2))
+
+pi_cls_q.shape, pi_cls_k.shape
+
+
+pi_cls_q_img = img_concat(
+    pi_cls_q,
+    col=H,
+    sep=1,
+)
+pi_cls_k_img = img_concat(
+    pi_cls_k,
+    col=H,
+    sep=1,
+)
+pi_cls_img = img_concat(
+    [pi_cls_q_img, pi_cls_k_img],
+    # [pi_cls_q_img, pi_cls_k_img, pi_cls_qk],
+    sep=10,
+)
+# fig = px.imshow(pi_cls_q_img, height=800)
+fig = px.imshow(pi_cls_img)
+
+fig.update_traces(
+    hoverongaps=False,
+)
+axes_dict = dict(
+    showticklabels=False,
+    showgrid=False,
+    zeroline=False,
+    showline=False,
+    # gridcolor='white',
+)
+fig.update_xaxes(**axes_dict).update_yaxes(**axes_dict)
+fig.update_layout(
+    template='plotly_dark',
+    margin=dict(l=0,r=0,t=0,b=0),
+    # height=640,
+    height=800,
+    # width=1000,
+)
+
+_name = f'deit_pi_cls_q+k'
+fig.write_image(f'plots/pi_deit/{_name}.png')
+fig
 
 # %% pi last cls
 # a = np.abs(pi)[-1, :, 0, 1:].reshape(-1, 14, 14)
