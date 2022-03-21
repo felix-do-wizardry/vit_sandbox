@@ -46,7 +46,7 @@ _logger = logging.getLogger(__name__)
 # %%
 DEBUG = 1
 FISH_MASK_TYPES = [
-    'h1d',
+    # 'h1d',
     'h',
     'hdist',
     'dist',
@@ -219,7 +219,7 @@ class Attention_FishPP(nn.Module):
                 mask_levels=3,
                 token_grid_size=1,
                 masks=None,
-                mask_cls=None,
+                mask_base=None,
                 non_linear=0,
                 non_linear_bias=1,
                 global_full_proj=0,
@@ -264,7 +264,7 @@ class Attention_FishPP(nn.Module):
             self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, head_ratio))
         
         self.masks = masks
-        self.mask_cls = mask_cls
+        self.mask_base = mask_base
         
         self.is_non_linear = non_linear
         if non_linear:
@@ -279,8 +279,8 @@ class Attention_FishPP(nn.Module):
                 f'qkv[{dim}->{total_dim}]',
                 f'levels[{mask_levels}]',
                 f't[{token_grid_size}]',
-                f'full[{int(global_full_proj)}',
-                # f'masks_shape[{list(masks.shape)}]',
+                f'full[{int(global_full_proj)}]',
+                f'masks_shape{list(masks.shape)}',
             )
     
     def forward(self, x):
@@ -302,9 +302,9 @@ class Attention_FishPP(nn.Module):
         
         # FishPP:
         # masks [1, 1, N, N, Level] -> [1, 1, N, N, head_ratio/H]
-        # mask_cls [1, 1, N, N, 1]
+        # mask_base [1, 1, N, N, 1]
         mask_weights = self.masks @ self.mask_proj
-        mask_weights = mask_weights + self.mask_cls
+        mask_weights = mask_weights + self.mask_base
         
         if self.global_full_proj:
             mask_weights = mask_weights.reshape([1, N, N, self.global_heads, self.head_ratio])
@@ -379,6 +379,8 @@ class VisionTransformer_FishPP(nn.Module):
                  non_linear=0,
                  non_linear_bias=1,
                  global_full_proj=0,
+                 cls_token_pos=1,
+                 cls_token_proj=1,
                  **kwargs
                  ):
         """
@@ -418,51 +420,87 @@ class VisionTransformer_FishPP(nn.Module):
         self.token_grid_size = int(img_size // patch_size)
         self.token_count = self.token_grid_size * self.token_grid_size + 1
         
+        self.cls_token_proj = bool(cls_token_proj)
+        assert isinstance(cls_token_pos, (float, int))
+        if cls_token_pos < 0:
+            self.cls_token_pos = None
+        else:
+            assert not (self.mask_type == 'dist' and self.cls_token_proj), ' '.join([
+                f'cls_token_pos[{cls_token_pos}] != -1, is not allowed with:',
+                f'mask_type[{self.mask_type}]',
+                f'cls_token_proj[{self.cls_token_proj}]',
+            ])
+            self.cls_token_pos = float(np.clip(cls_token_pos, 0, 1))
+        
         # h_levels == mask_levels - 1
         hm = H_Matrix(
             t=self.token_grid_size,
-            level=self.mask_levels - 1,
+            level=self.h_levels,
             mask_type=self.mask_type,
+            cls_token_count=1,
+            cls_token_order='first',
+            cls_token_pos=self.cls_token_pos,
         )
-        indexed_mask = hm.indexed_mask
         
-        # if self.mask_type in ['h']:
-        #     indexed_mask = hm.match_h
-        # elif self.mask_type in ['hdist']:
-        #     indexed_mask = hm.match
-        # elif self.mask_type in ['dist']:
-        #     indexed_mask = hm.dist_dig
-        # else:
-        #     raise NotImplementedError(f'`mask_type`[{self.mask_type}] has not been implemented')
+        indexed_mask = hm.indexed_mask
         
         _shape = list(indexed_mask.shape)
         assert (len(_shape) == 2 and _shape[0] == _shape[1] == self.token_count
             ), f'indexed_mask.shape={_shape} != token_count[{self.token_count}]'
         
-        # [Level, N, N] -> [N, N, Level] -> [1, 1, N, N, Level]
-        masks = torch.tensor(np.array([
-            indexed_mask == i
-            for i in range(self.mask_levels)
-        ]), dtype=torch.float32,
-            device='cuda',
-            requires_grad=False,
-        ).permute(1, 2, 0)[None, None]
-        
-        # [N, N] -> [N, N] -> [1, 1, N, N, 1]
-        mask_cls = torch.tensor(
-            indexed_mask == -1,
-            dtype=torch.float32,
-            device='cuda',
-            requires_grad=False,
-        )[None, None, :, :, None]
+        if self.cls_token_proj:
+            # using cls token projection -> set mask_base to all 0, also consider -1 in masks
+            assert np.all(indexed_mask[0, :] == -1), '?? cls mask (should be -1)'
+            assert np.all(indexed_mask[:, 0] == -1), '?? cls mask (should be -1)'
+            assert np.all(indexed_mask[1:, 1:] >= 0), '?? non-cls mask (should be >= 0)'
+            
+            # [N, N] -> [N, N] -> [1, 1, N, N, 1]
+            mask_base = torch.tensor(
+                indexed_mask * 0,
+                dtype=torch.float32,
+                device='cuda',
+                requires_grad=False,
+            )[None, None, :, :, None]
+            
+            # [Level, N, N] -> [N, N, Level] -> [1, 1, N, N, Level]
+            masks = torch.tensor(np.array([
+                indexed_mask == i
+                for i in range(-1, self.mask_levels)
+            ]), dtype=torch.float32,
+                device='cuda',
+                requires_grad=False,
+            ).permute(1, 2, 0)[None, None]
+            
+        else:
+            # not using cls token projection -> set mask_base to 1 for -1 values
+            
+            if self.cls_token_pos is not None and self.mask_type == 'dist':
+                assert np.all(indexed_mask >= 0), '?? mask (should all be >= 0)'
+            
+            # [N, N] -> [N, N] -> [1, 1, N, N, 1]
+            mask_base = torch.tensor(
+                indexed_mask == -1,
+                dtype=torch.float32,
+                device='cuda',
+                requires_grad=False,
+            )[None, None, :, :, None]
+            
+            # [Level, N, N] -> [N, N, Level] -> [1, 1, N, N, Level]
+            masks = torch.tensor(np.array([
+                indexed_mask == i
+                for i in range(0, self.mask_levels)
+            ]), dtype=torch.float32,
+                device='cuda',
+                requires_grad=False,
+            ).permute(1, 2, 0)[None, None]
         
         print()
-        print(f'<VIT> [FISH]',
+        print(f'<VIT> [FISHPP]',
             # f'',
             f'depth[{depth}]',
             f't[{self.token_grid_size}]',
             f'masks[{masks.size()}]',
-            f'mask_cls[{mask_cls.size()}]',
+            f'mask_base[{mask_base.size()}]',
             f'mask_type[{self.mask_type}]',
             f'global_full[{global_full_proj}]',
         )
@@ -491,10 +529,10 @@ class VisionTransformer_FishPP(nn.Module):
                 fishpp=True,
                 global_heads=self.global_heads,
                 mask_type=self.mask_type,
-                mask_levels=self.mask_levels,
+                mask_levels=self.mask_levels + self.cls_token_proj,
                 token_grid_size=int(img_size // patch_size),
                 masks=masks,
-                mask_cls=mask_cls,
+                mask_base=mask_base,
                 non_linear=non_linear,
                 non_linear_bias=non_linear_bias,
                 global_full_proj=global_full_proj,

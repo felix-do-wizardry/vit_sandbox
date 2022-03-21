@@ -24,6 +24,8 @@ class H_Matrix:
         self.mask_type = mask_type
         self.is_dist = mask_type in ['dist']
         
+        assert cls_token_order in ['first']
+        
         self.cls_token_pad = None
         if cls_token_count < 1:
             self.cls_token_count = 0
@@ -101,25 +103,38 @@ class H_Matrix:
             for ik in range(n_img):
                 pk = (int(ik // t), ik % t)
                 
-                if self.is_dist:
-                    _dist = np.sqrt(np.sum((np.array(pq) - np.array(pk)) ** 2)) / t
-                    dist[iq, ik] = _dist
-                else:
-                    x_match = int(cxf[iq] == cxf[ik])
-                    y_match = int(cyf[iq] == cyf[ik])
-                    
-                    _match = x_match + y_match
-                    _match_h = x_match * y_match + y_match
-                    
-                    assert _match in [0, 1, 2]
-                    
-                    match[iq, ik] = _match
-                    match_h[iq, ik] = _match_h
+                dist[iq, ik] = np.sqrt(np.sum((np.array(pq) - np.array(pk)) ** 2)) / t
+                
+                x_match = int(cxf[iq] == cxf[ik])
+                y_match = int(cyf[iq] == cyf[ik])
+                
+                _match = x_match + y_match
+                _match_h = x_match * y_match + y_match
+                
+                assert _match in [0, 1, 2]
+                
+                match[iq, ik] = _match
+                match_h[iq, ik] = _match_h
         
         assert np.all(match >= 0), f'?? {np.min(match)}'
         assert np.all(match_h >= 0), f'?? {np.min(match_h)}'
         
-        match = np.pad(match, pad_width=self.cls_token_pad, constant_values=0)
+        if self.cls_token_count > 0:
+            # CLS
+            match = np.pad(match, pad_width=self.cls_token_pad, constant_values=-1)
+            match_h = np.pad(match_h, pad_width=self.cls_token_pad, constant_values=-1)
+            dist = np.pad(dist, pad_width=self.cls_token_pad, constant_values=0.)
+            
+            if self.is_dist and self.cls_token_pos is not None:
+                p_cls = np.array(self.cls_token_pos).astype(float) * (t - 1)
+                for i in range(n_img):
+                    p = np.array([int(i // t), i % t]).astype(float)
+                    # CLS q
+                    dist[0, i + self.cls_token_count] = np.sqrt(np.sum((p_cls - p) ** 2)) / t
+                    # CLS k
+                    dist[i + self.cls_token_count, 0] = np.sqrt(np.sum((p_cls - p) ** 2)) / t
+                # CLS qk
+                dist[0, 0] = 0.
         
         dist_neg = -dist
         digitize_levels = level + 1
@@ -130,14 +145,18 @@ class H_Matrix:
                 np.linspace(0, 100, digitize_levels + 1),
             ),
         ), 1, digitize_levels) - 1
-        dist_dig[0, :] = -1
-        dist_dig[:, 0] = -1
+        
+        # CLS
+        if self.cls_token_count > 0:
+            # CLS
+            if self.is_dist and self.cls_token_pos is None:
+                dist_dig[:self.cls_token_count, :] = -1
+                dist_dig[:, :self.cls_token_count] = -1
         
         # shape = [t*t+1, t*t+1], range = [-1, level]
         self.match = match
         self.match_h = match_h
         self.dist = dist
-        self.dist_neg = dist_neg
         self.dist_dig = dist_dig
         
         
@@ -150,58 +169,61 @@ class H_Matrix:
         else:
             raise NotImplementedError(f'`mask_type`[{mask_type}] has not been implemented')
         
-    # @classmethod
-    # def check_cls(cls, n=4, i=0, count=1, order='first'):
-    #     if count < 1:
-    #         return False
-    #     if order == 'first':
-    #         return i < count
 
 # # %%
-# if __name__ == '__main__':
-#     hm = H_Matrix(
-#         t=int(224 // 16),
-#         level=2,
-#     )
-#     print(hm.match)
-#     hm.match_h
+# import plotly.express as px
+# import plotly.graph_objects as go
+# import pandas as pd
+
+# %%
+# _token_grid_size = 14
+# _mask_levels = 3
+# _mask_type = 'dist'
+# # _mask_type = 'hdist'
+# # _mask_type = 'h'
+
+# hm = H_Matrix(
+#     t=_token_grid_size,
+#     level=_mask_levels - 1,
+#     mask_type=_mask_type,
+    
+#     # cls_token_pos=0.5,
+#     cls_token_pos=None,
+    
+#     cls_token_count=1,
+    
+#     cls_token_order='first',
+# )
+
+# indexed_mask = hm.indexed_mask
+# indexed_mask
+
+# fig = px.imshow(
+#     indexed_mask,
+# )
+# fig.update_layout(
+#     template='plotly_dark',
+#     margin=dict(t=0,b=0,l=0,r=0),
+# )
+# fig
 
 # # %%
-# assert 0, 'DEBUGING'
-
-# %%
-_token_grid_size = 14
-_mask_levels = 3
-_mask_type = 'dist'
-
-hm = H_Matrix(
-    t=_token_grid_size,
-    level=_mask_levels - 1,
-    mask_type=_mask_type,
+# hm = H_Matrix(
+#     t=_token_grid_size,
+#     level=_mask_levels - 1,
+#     mask_type='hdist',
     
-    with_cls_token=True,
-    cls_token_pos=0.5,
-)
-indexed_mask = hm.indexed_mask
-indexed_mask
+#     # cls_token_pos=0.5,
+#     cls_token_pos=None,
+#     cls_token_count=1,
+#     cls_token_order='first',
+# )
+# fig = px.imshow(
+#     hm.indexed_mask,
+# )
+# fig.update_layout(
+#     template='plotly_dark',
+#     margin=dict(t=0,b=0,l=0,r=0),
+# )
+# fig
 
-# %%
-indexed_mask.shape, np.percentile(indexed_mask, np.linspace(0, 100, 11))
-
-# %%
-import plotly.express as px
-import plotly.graph_objects as go
-import pandas as pd
-
-# %%
-fig = px.imshow(
-    indexed_mask,
-)
-fig.update_layout(
-    template='plotly_dark',
-    
-)
-fig
-
-# %%
-np.pad()

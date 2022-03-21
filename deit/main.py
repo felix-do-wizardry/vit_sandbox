@@ -42,7 +42,13 @@ def get_args_parser():
     parser.add_argument('--fish_non_linear', default=0, type=int, help='whether to use non-linear fish head projection')
     parser.add_argument('--fish_non_linear_bias', default=1, type=int, help='whether to use bias with non-linear fish head projection')
     
-    parser.add_argument('--fish_global_full_proj', default=1, type=int, help='whether to do full projection from global heads to local heads (should be True) (omission -> 0)')
+    # whether to use full projection from global heads to local heads, previously 0
+    parser.add_argument('--fish_global_full_proj', default=1, type=int, help='whether to do full projection from global heads to local heads (should be 1) (omission -> 0)')
+    
+    # position for cls token, previously -1/None meaning not using
+    parser.add_argument('--fish_cls_token_pos', default=-1, type=float, help='pos for cls token, negative means None, range = [0, 1]')
+    # whether cls has its own mask, previously 0 meaning not using
+    parser.add_argument('--fish_cls_token_proj', default=1, type=int, help='whether cls has its own mask, must be 0 for type[dist] with cls_pos>=0 (omission -> 0)')
     
     parser.add_argument('--accumulation_steps', default=0, type=int, help='number of steps to accumulate grads before update, will increase the effective batch size')
     
@@ -220,6 +226,10 @@ def main(args):
             f'g{args.fish_global_heads}' + ('f' if args.fish_global_full_proj else ''),
             f'hl{args.fish_mask_levels}{"nl" + ("b" if args.fish_non_linear_bias else "") if args.fish_non_linear else ""}',
         ])
+        if args.fish_cls_token_pos >= 0 and args.fish_mask_type == 'dist':
+            _fish_type_str = f'{_fish_type_str}_cls{args.fish_cls_token_pos}'
+        elif args.fish_cls_token_proj:
+            _fish_type_str = f'{_fish_type_str}_cls'
         
     else:
         _fish_type_str = f'baseline'
@@ -360,6 +370,8 @@ def main(args):
         non_linear=args.fish_non_linear,
         non_linear_bias=args.fish_non_linear_bias,
         global_full_proj=args.fish_global_full_proj,
+        cls_token_pos=args.fish_cls_token_pos,
+        cls_token_proj=args.fish_cls_token_proj,
     )
 
     if args.finetune:
