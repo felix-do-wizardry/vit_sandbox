@@ -247,107 +247,256 @@ FF = FigFormat(fig_size=[800, 800],)
 FF
 
 # %%
-df = pd.read_csv('efficiency/MEMORY_FLOPS.csv')
-df_block = pd.read_csv('efficiency/MEMORY_FLOPS_BLOCK.csv')
-df['seq_len_str'] = [str(v) for v in df['seq_len']]
-df_block['seq_len_str'] = [str(v) for v in df_block['seq_len']]
-df
-df_block
+# # %%
+# df = pd.read_csv('efficiency/MEMORY_FLOPS.csv')
+# df_block = pd.read_csv('efficiency/MEMORY_FLOPS_BLOCK.csv')
+# df['seq_len_str'] = [str(v) for v in df['seq_len']]
+# df_block['seq_len_str'] = [str(v) for v in df_block['seq_len']]
+# df
+# df_block
+
+# # %%
+# df = df[df['type_full'] == 'fiak_0.5_0.0'].copy(True)
+# df_block = df_block[df_block['type_full'] == 'fiak_0.5_0.0'].copy(True)
+
+# df_block
+
+# # %% MODEL
+# fig_flops = px.line(
+#     df,
+#     x='seq_len_str',
+#     y='flop',
+#     color='type_full',
+#     markers=True,
+# )
+# figs_flops = FF.format_dual(
+#     fig_flops,
+#     y_title='FLOPS Ratio',
+#     y_dtick=0.05,
+# )
+# figs_flops[0].show(), figs_flops[1].show()
+
+# # %%
+# fig_mem = px.line(
+#     df,
+#     x='seq_len_str',
+#     y='mem',
+#     color='type_full',
+#     markers=True,
+# )
+# figs_mem = FF.format_dual(
+#     fig_mem,
+#     y_title='Memory Ratio',
+#     y_dtick=0.1,
+# )
+# figs_mem[0].show(), figs_mem[1].show()
+
+# # %%
+
+
+
+# # %% BLOCK
+# fig_flops_block = px.line(
+#     df_block,
+#     x='seq_len_str',
+#     y='flop',
+#     color='type_full',
+#     markers=True,
+# )
+# figs_flops_block = FF.format_dual(
+#     fig_flops_block,
+#     y_title='FLOPS Ratio',
+#     y_dtick=0.05,
+# )
+# figs_flops_block[0].show(), figs_flops_block[1].show()
+
+# # %%
+# fig_mem_block = px.line(
+#     df_block,
+#     x='seq_len_str',
+#     y='mem',
+#     color='type_full',
+#     markers=True,
+# )
+# figs_mem_block = FF.format_dual(
+#     fig_mem_block,
+#     y_title='Memory Ratio',
+#     y_dtick=0.1,
+# )
+# figs_mem_block[0].show(), figs_mem_block[1].show()
+
 
 # %%
-df = df[df['type_full'] == 'fiak_0.5_0.0'].copy(True)
-df_block = df_block[df_block['type_full'] == 'fiak_0.5_0.0'].copy(True)
+# FigFormat.save_plots_md(
+#     dp='plots/eff_lm',
+#     begin_lines=[
+#         '# Plots and stuff',
+#         '## Plots LM Ratio',
+#     ],
+#     image_width=320,
+    
+#     lm_ratio_flops={
+#         'clean': figs_flops[0],
+#         'ref': figs_flops[1],
+#     },
+#     lm_ratio_mem={
+#         'clean': figs_mem[0],
+#         'ref': figs_mem[1],
+#     },
+    
+#     lm_ratio_flops_block={
+#         'clean': figs_flops_block[0],
+#         'ref': figs_flops_block[1],
+#     },
+#     lm_ratio_mem_block={
+#         'clean': figs_mem_block[0],
+#         'ref': figs_mem_block[1],
+#     },
+# )
 
-df_block
+# %%
+df_fish_lm_test = pd.read_csv('efficiency/lm_fish/mem_time_test_raw.csv')
+df_fish_lm_train = pd.read_csv('efficiency/lm_fish/mem_time_train_raw.csv')
+df_fish_lm_test['seq_len_str'] = [str(v) for v in df_fish_lm_test['sequence_len']]
+df_fish_lm_train['seq_len_str'] = [str(v) for v in df_fish_lm_train['sequence_len']]
+df_fish_lm_test
+df_fish_lm_train
 
-# %% MODEL
+# %%
+cols = ['name_method', 'num_global_heads', 'd_model', 'num_local_heads', 'd_head', 'sequence_len',]
+{
+    col: np.mean(df_fish_lm_test[col] == df_fish_lm_train[col])
+    for col in cols
+}
+
+# %%
+df_fish_lm = pd.read_csv('efficiency/lm_fish/model_raw.csv')
+df_fish_lm['seq_len_str'] = [str(v) for v in df_fish_lm['sequence_len']]
+df_fish_lm
+
+# %%
+df_fish_lm_softmax = df_fish_lm[df_fish_lm['name_method'] == 'softmax'].copy(True)
+df_fish_lm_test_softmax = df_fish_lm_test[df_fish_lm_test['name_method'] == 'softmax'].copy(True)
+df_fish_lm_train_softmax = df_fish_lm_train[df_fish_lm_train['name_method'] == 'softmax'].copy(True)
+df_fish_lm_softmax
+
+# %% LM MODEL FLOPS
 fig_flops = px.line(
-    df,
+    df_fish_lm_softmax,
     x='seq_len_str',
-    y='flop',
-    color='type_full',
+    y='flops',
+    color='d_model',
     markers=True,
 )
-figs_flops = FF.format_dual(
-    fig_flops, y_title='FLOPS Ratio')
-figs_flops[0].show(), figs_flops[1].show()
+# fig_flops.show()
+figs_flops = tuple([
+    FF.format(
+        go.Figure(fig_flops),
+        x_title='',
+        y_title='',
+        legend_title='',
+        corner='tl',
+        showlegend=False,
+    ),
+    FF.format(
+        go.Figure(fig_flops),
+        x_title='Sequence Length',
+        y_title='FLOPS',
+        legend_title='Model Dim',
+        corner='tl',
+        showlegend=True,
+    ),
+])
+figs_flops[0].show()
+figs_flops[1].show()
 
-# %%
-fig_mem = px.line(
-    df,
+# %% LM MODEL MEM TEST
+fig_mem_test = px.line(
+    df_fish_lm_test_softmax.sort_values('d_model'),
+    y='test_memory',
+    # x='d_model',
     x='seq_len_str',
-    y='mem',
-    color='type_full',
+    color='d_model',
     markers=True,
 )
-figs_mem = FF.format_dual(
-    fig_mem,
-    y_title='Memory Ratio',
-    y_dtick=0.1,
-)
-figs_mem[0].show(), figs_mem[1].show()
+# fig_mem.show()
+figs_mem_test = tuple([
+    FF.format(
+        go.Figure(fig_mem_test),
+        x_title='',
+        y_title='',
+        legend_title='',
+        corner='tl',
+        showlegend=False,
+    ),
+    FF.format(
+        go.Figure(fig_mem_test),
+        x_title='Sequence Length',
+        y_title='Memory Test',
+        legend_title='Model Dim',
+        corner='tl',
+        showlegend=True,
+    ),
+])
+figs_mem_test[0].show()
+figs_mem_test[1].show()
 
-# %%
-
-
-
-# %% BLOCK
-fig_flops_block = px.line(
-    df_block,
+# %% LM MODEL MEM TRAIN
+fig_mem_train = px.line(
+    df_fish_lm_train_softmax.sort_values('d_model'),
+    y='train_memory',
+    # x='d_model',
+    # color='sequence_len',
     x='seq_len_str',
-    y='flop',
-    color='type_full',
+    color='d_model',
     markers=True,
 )
-figs_flops_block = FF.format_dual(fig_flops_block, y_title='FLOPS Ratio',)
-figs_flops_block[0].show(), figs_flops_block[1].show()
+# fig_mem.show()
+figs_mem_train = tuple([
+    FF.format(
+        go.Figure(fig_mem_train),
+        x_title='',
+        y_title='',
+        legend_title='',
+        corner='tl',
+        showlegend=False,
+    ),
+    FF.format(
+        go.Figure(fig_mem_train),
+        x_title='Sequence Length',
+        y_title='Memory Train',
+        legend_title='Model Dim',
+        corner='tl',
+        showlegend=True,
+    ),
+])
+figs_mem_train[0].show()
+figs_mem_train[1].show()
 
-# %%
-fig_mem_block = px.line(
-    df_block,
-    x='seq_len_str',
-    y='mem',
-    color='type_full',
-    markers=True,
-)
-figs_mem_block = FF.format_dual(
-    fig_mem_block,
-    y_title='Memory Ratio',
-    y_dtick=0.1,
-)
-figs_mem_block[0].show(), figs_mem_block[1].show()
 
 
 # %%
 FigFormat.save_plots_md(
-    dp='plots/eff_lm',
+    dp='plots/fish_lm_eff',
     begin_lines=[
         '# Plots and stuff',
         '## Plots LM Ratio',
     ],
     image_width=320,
     
-    lm_ratio_flops={
+    fish_lm_flops={
         'clean': figs_flops[0],
         'ref': figs_flops[1],
     },
-    lm_ratio_mem={
-        'clean': figs_mem[0],
-        'ref': figs_mem[1],
+    fish_lm_mem_test={
+        'clean': figs_mem_test[0],
+        'ref': figs_mem_test[1],
     },
-    
-    lm_ratio_flops_block={
-        'clean': figs_flops_block[0],
-        'ref': figs_flops_block[1],
-    },
-    lm_ratio_mem_block={
-        'clean': figs_mem_block[0],
-        'ref': figs_mem_block[1],
+    fish_lm_mem_train={
+        'clean': figs_mem_train[0],
+        'ref': figs_mem_train[1],
     },
 )
-
-# %%
-
 
 
 
