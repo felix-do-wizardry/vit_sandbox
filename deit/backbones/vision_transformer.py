@@ -44,7 +44,7 @@ import numpy as np
 _logger = logging.getLogger(__name__)
 
 # %%
-DEBUG = 1
+DEBUG = 0
 FISH_MASK_TYPES = [
     # 'h1d',
     'h',
@@ -485,7 +485,7 @@ class VisionTransformer_FishPP(nn.Module):
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0., embed_layer=PatchEmbed, norm_layer=None,
                  act_layer=None, weight_init='',
                  global_heads=1,
-                 mask_type='h',
+                 mask_type='dist',
                  mask_levels=3,
                  non_linear=0,
                  non_linear_bias=1,
@@ -641,7 +641,7 @@ class VisionTransformer_FishPP(nn.Module):
                 device='cuda',
                 requires_grad=False,
             ).permute(1, 2, 0)[None, None]
-            mask_levels_final = self.mask_levels
+            mask_levels_final = self.mask_levels + 1
             
         elif self.cls_token_type in ['sum']:
             # [sum] using cls token projection -> set masks to all True for -1 in indexed_mask
