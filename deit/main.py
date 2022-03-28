@@ -42,15 +42,17 @@ def get_args_parser():
     parser.add_argument('--fish_non_linear', default=0, type=int, help='whether to use non-linear fish head projection')
     parser.add_argument('--fish_non_linear_bias', default=1, type=int, help='whether to use bias with non-linear fish head projection')
     
-    # whether each global head has its own projection to its local heads, previously 0
-    parser.add_argument('--fish_global_full_proj', default=1, type=int, help='whether to do projection for each individual global head (should be 1) (omission -> 0)')
-    # whether all global head masks are used for projection to (all) local heads, previously 0
-    parser.add_argument('--fish_global_full_mix', default=0, type=int, help='whether mix all global head masks together (omission -> 0)')
+    # # whether each global head has its own projection to its local heads, previously 0
+    # parser.add_argument('--fish_global_full_proj', default=1, type=int, help='whether to do projection for each individual global head (should be 1) (omission -> 0)')
+    # # whether all global head masks are used for projection to (all) local heads, previously 0
+    # parser.add_argument('--fish_global_full_mix', default=0, type=int, help='whether mix all global head masks together (omission -> 0)')
+    # # whether cls has its own mask, previously 0 meaning not using
+    # parser.add_argument('--fish_cls_token_proj', default=1, type=int, help='whether cls has its own mask, must be 0 for type[dist] with cls_pos>=0 (omission -> 0)')
+    parser.add_argument('--fish_global_proj_type', default='full', type=str, help='method type to mix global head masks [base, full, mix] (default=full)')
+    parser.add_argument('--fish_cls_token_type', default='mask', type=str, help='method type to assign mask to CLS entries [copy, pos, mask, sum] (default=mask)')
     
     # position for cls token, previously -1/None meaning not using
     parser.add_argument('--fish_cls_token_pos', default=-1, type=float, help='pos for cls token, negative means None, range = [0, 1]')
-    # whether cls has its own mask, previously 0 meaning not using
-    parser.add_argument('--fish_cls_token_proj', default=1, type=int, help='whether cls has its own mask, must be 0 for type[dist] with cls_pos>=0 (omission -> 0)')
     
     parser.add_argument('--fish_layer_limit', default=-1, type=int, help='whether to limit the fishpp layer count, neg means not using')
     
@@ -61,6 +63,8 @@ def get_args_parser():
     parser.add_argument('--metrics_only', default=0, type=int, help='whether to quickly calculate FULL metrics and exit')
     parser.add_argument('--metrics', default=1, type=int, help='whether to calculate for flops and params metrics')
     parser.add_argument('--batch_limit', default=0, type=int, help='number of batches to limit training')
+    
+    parser.add_argument('--metrics_test', default=0, type=int, help='(new) custom metrics test only flow for deit')
     
     parser.add_argument('--batch-size', default=64, type=int)
     parser.add_argument('--epochs', default=300, type=int)
@@ -226,10 +230,8 @@ def main(args):
         assert args.fish_mask_levels >= 0
         assert args.fish_mask_type in ['h1d', 'h', 'hdist', 'dist']
         _fish_type_str_head = f'g{args.fish_global_heads}'
-        if args.fish_global_full_mix:
-            _fish_type_str_head = _fish_type_str_head + 'm'
-        elif args.fish_global_full_proj:
-            _fish_type_str_head = _fish_type_str_head + 'f'
+        if args.fish_global_proj_type != 'base':
+            _fish_type_str_head = _fish_type_str_head + args.fish_global_proj_type[:1]
         
         _fish_type_str = '_'.join([
             f'fishpp_{args.fish_mask_type}',
@@ -237,10 +239,12 @@ def main(args):
             _fish_type_str_head,
             f'hl{args.fish_mask_levels}{"nl" + ("b" if args.fish_non_linear_bias else "") if args.fish_non_linear else ""}',
         ])
-        if args.fish_cls_token_pos >= 0 and args.fish_mask_type == 'dist':
-            _fish_type_str = f'{_fish_type_str}_cls{args.fish_cls_token_pos}'
-        elif args.fish_cls_token_proj:
-            _fish_type_str = f'{_fish_type_str}_cls'
+        
+        if args.fish_cls_token_pos >= 0 and args.fish_mask_type == 'dist' and args.fish_cls_token_type == 'pos':
+            _fish_type_str = f'{_fish_type_str}_pos{args.fish_cls_token_pos}'
+        elif args.fish_cls_token_type in ['mask', 'sum']:
+            _fish_type_str = f'{_fish_type_str}_{args.fish_cls_token_type}'
+        
         if args.fish_layer_limit >= 1:
             _fish_type_str = f'{_fish_type_str}_r{args.fish_layer_limit}'
     else:
@@ -381,14 +385,19 @@ def main(args):
         mask_levels=args.fish_mask_levels,
         non_linear=args.fish_non_linear,
         non_linear_bias=args.fish_non_linear_bias,
-        global_full_proj=args.fish_global_full_proj,
         cls_token_pos=args.fish_cls_token_pos,
-        cls_token_proj=args.fish_cls_token_proj,
+        
+        # global_full_proj=args.fish_global_full_proj,
+        # global_full_mix=args.fish_global_full_mix,
+        global_proj_type=args.fish_global_proj_type,
+        
+        cls_token_type=args.fish_cls_token_type,
         
         layer_limit=args.fish_layer_limit,
         layer_offset=0,
         
-        global_full_mix=args.fish_global_full_mix,
+        
+        metrics_test=args.metrics_test,
     )
 
     if args.finetune:
@@ -507,8 +516,64 @@ def main(args):
                 loss_scaler.load_state_dict(checkpoint['scaler'])
         lr_scheduler.step(args.start_epoch)
     if args.eval:
+        if args.metrics_test:
+            if utils.is_main_process():
+                _bs = args.batch_size
+                # _bs = 64
+                print(f'testing for metrics test (new), with bs[{_bs}]')
+                assert not args.wandb, 'no wandb for metrics_test'
+                # model.train(True)
+                model.eval()
+                
+                _img_size = args.input_size
+                _input = torch.tensor(
+                    # np.random.sample([1, 3, _img_size, _img_size]),
+                    np.ones(shape=[_bs, 3, _img_size, _img_size]) / 2,
+                    dtype=torch.float32,
+                    device='cuda',
+                )
+                flops_ca = FlopCountAnalysis(model, _input)
+                _gflops = float(flops_ca.total() / 1e9)
+                _mem_gb = float(torch.cuda.max_memory_allocated() / (1024 ** 3))
+                print(f'\nmetrics TEST: bs[{_bs}]',
+                    f'fvcore_gflops[{_gflops:.3f}G ({_gflops/_bs:.3f}G/img)]',
+                    f'memory[{_mem_gb:.3f}GB ({_mem_gb/_bs:.3f}GB/img)]\n',)
+                
+                _metrics = {
+                    'bs': _bs,
+                    'gflops': _gflops,
+                    'memory': _mem_gb,
+                    **dict(
+                        fishpp=args.fishpp,
+                        global_heads=args.fish_global_heads,
+                        mask_type=args.fish_mask_type,
+                        mask_levels=args.fish_mask_levels,
+                        non_linear=args.fish_non_linear,
+                        non_linear_bias=args.fish_non_linear_bias,
+                        cls_token_pos=args.fish_cls_token_pos,
+                        
+                        # global_full_proj=args.fish_global_full_proj,
+                        # global_full_mix=args.fish_global_full_mix,
+                        global_proj_type=args.fish_global_proj_type,
+                        
+                        cls_token_type=args.fish_cls_token_type,
+                        
+                        layer_limit=args.fish_layer_limit,
+                        layer_offset=0,
+                        
+                        
+                        metrics_test=args.metrics_test,
+                    ),
+                }
+                _fp = os.path.join(args.output_dir, 'metrics.json')
+                with open(_fp, 'w') as fo:
+                    json.dump(_metrics, fo, indent=4)
+                print(f'metrics.json: <{_fp}>')
+            return
+        
         test_stats = evaluate(data_loader_val, model, device)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        
         return
 
     print(f"Start training for {args.epochs} epochs")
