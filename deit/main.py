@@ -42,13 +42,17 @@ def get_args_parser():
     parser.add_argument('--fish_non_linear', default=0, type=int, help='whether to use non-linear fish head projection')
     parser.add_argument('--fish_non_linear_bias', default=1, type=int, help='whether to use bias with non-linear fish head projection')
     
-    # whether to use full projection from global heads to local heads, previously 0
-    parser.add_argument('--fish_global_full_proj', default=1, type=int, help='whether to do full projection from global heads to local heads (should be 1) (omission -> 0)')
+    # whether each global head has its own projection to its local heads, previously 0
+    parser.add_argument('--fish_global_full_proj', default=1, type=int, help='whether to do projection for each individual global head (should be 1) (omission -> 0)')
+    # whether all global head masks are used for projection to (all) local heads, previously 0
+    parser.add_argument('--fish_global_full_mix', default=0, type=int, help='whether mix all global head masks together (omission -> 0)')
     
     # position for cls token, previously -1/None meaning not using
     parser.add_argument('--fish_cls_token_pos', default=-1, type=float, help='pos for cls token, negative means None, range = [0, 1]')
     # whether cls has its own mask, previously 0 meaning not using
     parser.add_argument('--fish_cls_token_proj', default=1, type=int, help='whether cls has its own mask, must be 0 for type[dist] with cls_pos>=0 (omission -> 0)')
+    
+    parser.add_argument('--fish_layer_limit', default=-1, type=int, help='whether to limit the fishpp layer count, neg means not using')
     
     parser.add_argument('--accumulation_steps', default=0, type=int, help='number of steps to accumulate grads before update, will increase the effective batch size')
     
@@ -221,16 +225,24 @@ def main(args):
         assert args.fish_global_heads >= 1
         assert args.fish_mask_levels >= 0
         assert args.fish_mask_type in ['h1d', 'h', 'hdist', 'dist']
+        _fish_type_str_head = f'g{args.fish_global_heads}'
+        if args.fish_global_full_mix:
+            _fish_type_str_head = _fish_type_str_head + 'm'
+        elif args.fish_global_full_proj:
+            _fish_type_str_head = _fish_type_str_head + 'f'
+        
         _fish_type_str = '_'.join([
             f'fishpp_{args.fish_mask_type}',
-            f'g{args.fish_global_heads}' + ('f' if args.fish_global_full_proj else ''),
+            # f'g{args.fish_global_heads}' + ('f' if args.fish_global_full_proj else ''),
+            _fish_type_str_head,
             f'hl{args.fish_mask_levels}{"nl" + ("b" if args.fish_non_linear_bias else "") if args.fish_non_linear else ""}',
         ])
         if args.fish_cls_token_pos >= 0 and args.fish_mask_type == 'dist':
             _fish_type_str = f'{_fish_type_str}_cls{args.fish_cls_token_pos}'
         elif args.fish_cls_token_proj:
             _fish_type_str = f'{_fish_type_str}_cls'
-        
+        if args.fish_layer_limit >= 1:
+            _fish_type_str = f'{_fish_type_str}_r{args.fish_layer_limit}'
     else:
         _fish_type_str = f'baseline'
     
@@ -372,6 +384,11 @@ def main(args):
         global_full_proj=args.fish_global_full_proj,
         cls_token_pos=args.fish_cls_token_pos,
         cls_token_proj=args.fish_cls_token_proj,
+        
+        layer_limit=args.fish_layer_limit,
+        layer_offset=0,
+        
+        global_full_mix=args.fish_global_full_mix,
     )
 
     if args.finetune:

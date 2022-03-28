@@ -222,7 +222,9 @@ class Attention_FishPP(nn.Module):
                 mask_base=None,
                 non_linear=0,
                 non_linear_bias=1,
-                global_full_proj=0,
+                global_full_proj=1,
+                global_full_mix=0,
+                # global_mix_type='full',
                 # **kwargs,
                 ):
         super().__init__()
@@ -233,6 +235,7 @@ class Attention_FishPP(nn.Module):
         self.token_grid_size = token_grid_size
         self.token_count = self.token_grid_size * self.token_grid_size
         self.global_full_proj = bool(global_full_proj)
+        self.global_full_mix = bool(global_full_mix)
         
         assert mask_type in FISH_MASK_TYPES, f'mask_type[{mask_type}] not in {FISH_MASK_TYPES}'
         
@@ -258,7 +261,14 @@ class Attention_FishPP(nn.Module):
         self.head_ratio = head_ratio
         # self.level_mix = nn.Linear(self.mask_levels, self.num_heads // self.global_heads, bias=False)
         # torch.nn.init.constant_(self.level_mix.weight, 1.0)
-        if self.global_full_proj:
+        
+        # global mix type: mask_weights
+        # - base: [1, HR]
+        # - full: [G, HR]
+        # - mix : [G, HR]
+        if self.global_full_mix:
+            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.num_heads * self.global_heads))
+        elif self.global_full_proj:
             self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.num_heads))
         else:
             self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, head_ratio))
@@ -279,7 +289,7 @@ class Attention_FishPP(nn.Module):
                 f'qkv[{dim}->{total_dim}]',
                 f'levels[{mask_levels}]',
                 f't[{token_grid_size}]',
-                f'full[{int(global_full_proj)}]',
+                f'global[{"mix" if global_full_mix else ("full" if global_full_proj else "base")}]',
                 f'masks_shape{list(masks.shape)}',
             )
     
@@ -301,24 +311,38 @@ class Attention_FishPP(nn.Module):
         attn = (q @ k.transpose(-2, -1)) * self.scale
         
         # FishPP:
-        # masks [1, 1, N, N, Level] -> [1, 1, N, N, head_ratio/H]
+        # masks [1, 1, N, N, Level] -> [1, 1, N, N, HR / H / GH*H]
         # mask_base [1, 1, N, N, 1]
         mask_weights = self.masks @ self.mask_proj
         mask_weights = mask_weights + self.mask_base
         
-        if self.global_full_proj:
+        if self.global_full_mix:
+            mask_weights = mask_weights.reshape([1, N, N, self.global_heads, self.num_heads])
+            mask_weights = mask_weights.permute(0, 3, 1, 2, 4)
+            # masks_weights [1, GH, N, N, H]
+        elif self.global_full_proj:
             mask_weights = mask_weights.reshape([1, N, N, self.global_heads, self.head_ratio])
             mask_weights = mask_weights.permute(0, 3, 1, 2, 4)
-            # masks_weights [1, GH, N, N, head_ratio]
+            # masks_weights [1, GH, N, N, HR]
         
-        # attn [B, GH, N, N] x masks [1, 1/GH, N, N, head_ratio] -> [B, GH, N, N, head_ratio]
+        # attn [B, GH, N, N] x masks [1, 1/GH, N, N, HR/H] -> [B, GH, N, N, HR/H]
         attn = attn[..., None] * mask_weights
+        
+        if self.global_full_mix:
+            # [B, GH, N, N, H] -> [B, N, N, H]
+            attn = torch.sum(attn, dim=-4, keepdim=False)
+            # [B, N, N, H] -> [B, N, N, GH, HR]
+            attn = attn.reshape([B, N, N, self.global_heads, self.head_ratio])
+            # [B, N, N, GH, HR] -> [B, GH, N, N, HR]
+            attn = attn.permute(0, 3, 1, 2, 4)
+        
+        # attn: [B, GH, N, N, HR]
         
         if self.is_non_linear:
             attn = nn.functional.relu(attn)
             attn = self.head_proj(attn)
         
-        # [B, GH, N, N, head_ratio] -> [B, GH, head_ratio, N, N] -> [B, H, N, N]
+        # [B, GH, N, N, HR] -> [B, GH, HR, N, N] -> [B, H, N, N]
         attn = attn.permute(0, 1, 4, 2, 3).contiguous().reshape(B, self.num_heads, N, N)
         
         attn = attn.softmax(dim=-1)
@@ -380,7 +404,10 @@ class VisionTransformer_FishPP(nn.Module):
                  non_linear_bias=1,
                  global_full_proj=0,
                  cls_token_pos=1,
-                 cls_token_proj=1,
+                 cls_token_type=1,
+                 layer_limit=None,
+                 layer_offset=0,
+                 global_full_mix=0,
                  **kwargs
                  ):
         """
@@ -415,12 +442,15 @@ class VisionTransformer_FishPP(nn.Module):
         self.global_heads = global_heads
         assert mask_type in FISH_MASK_TYPES, f'mask_type[{mask_type}] not in {FISH_MASK_TYPES}'
         self.mask_type = mask_type
-        self.global_full_proj = global_full_proj
+        self.global_full_proj = bool(global_full_proj)
+        self.global_full_mix = bool(global_full_mix)
         
         self.token_grid_size = int(img_size // patch_size)
         self.token_count = self.token_grid_size * self.token_grid_size + 1
         
-        self.cls_token_proj = bool(cls_token_proj)
+        assert cls_token_type in ['pos', 'copy', 'mask', 'sum'], f'cls_token_type[{self.cls_token_type}] is not valid'
+        self.cls_token_type = cls_token_type
+        
         assert isinstance(cls_token_pos, (float, int))
         if cls_token_pos < 0:
             self.cls_token_pos = None
@@ -428,9 +458,19 @@ class VisionTransformer_FishPP(nn.Module):
             assert not (self.mask_type == 'dist' and self.cls_token_proj), ' '.join([
                 f'cls_token_pos[{cls_token_pos}] != -1, is not allowed with:',
                 f'mask_type[{self.mask_type}]',
+                'and',
                 f'cls_token_proj[{self.cls_token_proj}]',
             ])
             self.cls_token_pos = float(np.clip(cls_token_pos, 0, 1))
+        
+        assert layer_offset >= 0
+        layer_range = [layer_offset, depth]
+        # if layer_offset >= 0:
+        #     layer_range[0] = layer_offset
+        #     # fishpp_layers = list(range(layer_offset, depth))
+        if layer_limit is not None and layer_limit >= 1:
+            layer_range[1] = layer_offset + layer_limit
+            # fishpp_layers = list(range(layer_offset, layer_offset + layer_limit))
         
         # h_levels == mask_levels - 1
         hm = H_Matrix(
@@ -496,13 +536,13 @@ class VisionTransformer_FishPP(nn.Module):
         
         print()
         print(f'<VIT> [FISHPP]',
-            # f'',
             f'depth[{depth}]',
             f't[{self.token_grid_size}]',
             f'masks[{masks.size()}]',
             f'mask_base[{mask_base.size()}]',
             f'mask_type[{self.mask_type}]',
-            f'global_full[{global_full_proj}]',
+            f'global[{"mix" if global_full_mix else ("full" if global_full_proj else "base")}]',
+            f'layer_range[{layer_range[0]}-{layer_range[1]}]',
         )
         print()
         
@@ -526,7 +566,7 @@ class VisionTransformer_FishPP(nn.Module):
             Block(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, drop=drop_rate,
                 attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, act_layer=act_layer,
-                fishpp=True,
+                fishpp=layer_range[0] <= i < layer_range[1],
                 global_heads=self.global_heads,
                 mask_type=self.mask_type,
                 mask_levels=self.mask_levels + self.cls_token_proj,
@@ -536,6 +576,7 @@ class VisionTransformer_FishPP(nn.Module):
                 non_linear=non_linear,
                 non_linear_bias=non_linear_bias,
                 global_full_proj=global_full_proj,
+                global_full_mix=global_full_mix,
             )
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
