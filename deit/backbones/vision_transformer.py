@@ -286,7 +286,7 @@ class Attention_FishPP(nn.Module):
         
         self.is_non_linear = non_linear
         if non_linear:
-            self.head_proj = nn.Linear(head_ratio, head_ratio, bias=non_linear_bias)
+            self.head_proj = nn.Linear(self.num_heads, self.num_heads, bias=non_linear_bias)
         else:
             self.head_proj = None
         
@@ -353,11 +353,16 @@ class Attention_FishPP(nn.Module):
         # attn: [B, GH, N, N, HR]
         
         if self.is_non_linear:
+            # changed from HR->HR to H->H
+            # attn: [B, GH, N, N, HR] -> [B, N, N, H]
+            attn = attn.permute(0, 2, 3, 1, 4).contiguous().reshape(B, N, N, self.num_heads)
             attn = nn.functional.relu(attn)
             attn = self.head_proj(attn)
-        
-        # [B, GH, N, N, HR] -> [B, GH, HR, N, N] -> [B, H, N, N]
-        attn = attn.permute(0, 1, 4, 2, 3).contiguous().reshape(B, self.num_heads, N, N)
+            # [B, N, N, H] -> [B, H, N, N]
+            attn = attn.permute(0, 3, 1, 2).contiguous()
+        else:
+            # [B, GH, N, N, HR] -> [B, GH, HR, N, N] -> [B, H, N, N]
+            attn = attn.permute(0, 1, 4, 2, 3).contiguous().reshape(B, self.num_heads, N, N)
         
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
@@ -416,11 +421,16 @@ class Attention_FishPP(nn.Module):
         # attn: [B, GH, N, N, HR]
         
         if self.is_non_linear:
+            # changed from HR->HR to H->H
+            # attn: [B, GH, N, N, HR] -> [B, N, N, H]
+            attn = attn.permute(0, 2, 3, 1, 4).contiguous().reshape(B, N, N, self.num_heads)
             attn = nn.functional.relu(attn)
             attn = self.head_proj(attn)
-        
-        # [B, GH, N, N, HR] -> [B, GH, HR, N, N] -> [B, H, N, N]
-        attn = attn.permute(0, 1, 4, 2, 3).contiguous().reshape(B, self.num_heads, N, N)
+            # [B, N, N, H] -> [B, H, N, N]
+            attn = attn.permute(0, 3, 1, 2).contiguous()
+        else:
+            # [B, GH, N, N, HR] -> [B, GH, HR, N, N] -> [B, H, N, N]
+            attn = attn.permute(0, 1, 4, 2, 3).contiguous().reshape(B, self.num_heads, N, N)
         
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
