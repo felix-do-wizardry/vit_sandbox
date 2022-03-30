@@ -480,7 +480,7 @@ FigFormat.save_plots_md(
     dp='plots/fish_lm_eff',
     begin_lines=[
         '# Plots and stuff',
-        '## Plots LM Ratio',
+        '## FISH - LM - FLOPS + MEM',
     ],
     image_width=320,
     

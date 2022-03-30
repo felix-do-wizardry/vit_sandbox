@@ -15,3 +15,6 @@ gmm/pi/*.npy
 gmm/attn/*.npy
 gmm/logs/eigen_log.csv
 gmm/eigen/*.npy
+gmm/plots/test_ir/*
+swin/wandb/*
+swin/output/*

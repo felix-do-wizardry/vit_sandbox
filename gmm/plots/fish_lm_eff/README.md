@@ -1,6 +1,6 @@
 # Plots and stuff
 
-## Plots LM Ratio
+## FISH - LM - FLOPS + MEM
 
 > fish_lm_flops
 
