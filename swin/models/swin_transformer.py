@@ -10,7 +10,8 @@ import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
-# from models.h_matrix import H_Matrix
+import numpy as np
+from models.h_matrix import H_Matrix, H_Matrix_Masks
 
 
 class Mlp(nn.Module):
@@ -177,17 +178,50 @@ class WindowAttention_FishPP(nn.Module):
     """
 
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.,
+                masks=None,
+                mask_levels=None,
                 
+                global_heads=1,
+                mask_type='h',
+                non_linear=0,
+                non_linear_bias=1,
+                global_proj_type='full',
+                metrics_test=False,
                 # **kwargs,
                 ):
-
         super().__init__()
+        
+        # assert isinstance(masks, np.ndarray)
+        assert masks is not None
+        assert isinstance(mask_levels, int)
+        assert mask_levels >= 1
+        
+        assert global_proj_type in ['full', 'mix'], 'full or mix only'
+        assert mask_type in ['dist']
+        assert window_size[0] == window_size[1]
+        assert num_heads % global_heads == 0
+        
+        self.global_proj_type = global_proj_type
+        self.global_heads = global_heads
+        self.mask_type = mask_type
+        self.mask_levels = mask_levels
+        self.token_count = window_size[0] * window_size[1]
+        self.global_proj_type = global_proj_type
+        
         self.dim = dim
         self.window_size = window_size  # Wh, Ww
         self.num_heads = num_heads
         head_dim = dim // num_heads
+        self.head_dim = head_dim
         self.scale = qk_scale or head_dim ** -0.5
-
+        
+        global_dim = int(head_dim) * self.global_heads
+        self.global_dim = global_dim
+        self.total_heads = self.global_heads * 2 + self.num_heads
+        total_dim = self.head_dim * self.total_heads
+        
+        self.masks = masks
+        
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
@@ -205,13 +239,68 @@ class WindowAttention_FishPP(nn.Module):
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
         self.register_buffer("relative_position_index", relative_position_index)
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        
+        self.qkv = nn.Linear(dim, total_dim, bias=qkv_bias)
+        # self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
+        
+        
+        
+        head_ratio = int(self.num_heads // self.global_heads)
+        self.head_ratio = head_ratio
+        
+        # global mix type: mask_weights
+        # - base: [1, HR]
+        # - full: [G, HR]
+        # - mix : [G, HR]
+        if self.global_proj_type == 'mix':
+            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.num_heads * self.global_heads, device='cuda'))
+        elif self.global_proj_type == 'full':
+            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.num_heads, device='cuda'))
+        else:
+            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.head_ratio, device='cuda'))
+        
+        
+        self.is_non_linear = non_linear
+        if non_linear:
+            self.head_proj = nn.Linear(self.num_heads, self.num_heads, bias=non_linear_bias)
+        else:
+            self.head_proj = None
+        
+        
+        # TODO: add metrics_test implementation (swin)
+        self.metrics_test = bool(metrics_test)
+        # if self.metrics_test:
+        #     # FishPP:
+        #     # masks [1, 1, N, N, Level] -> [1, 1, N, N, HR / H / GH*H]
+        #     # mask_base [1, 1, N, N, 1]
+        #     mask_weights = self.masks @ self.mask_proj
+        #     mask_weights = mask_weights + self.mask_base
+            
+        #     N = self.token_count
+        #     if self.global_proj_type == 'mix':
+        #         mask_weights = torch.ones(1, self.global_heads, N, N, self.num_heads, device='cuda')
+        #         # masks_weights [1, GH, N, N, H]
+        #     elif self.global_proj_type == 'full':
+        #         mask_weights = torch.ones(1, self.global_heads, N, N, self.head_ratio, device='cuda')
+        #         # masks_weights [1, GH, N, N, HR]
+        #     else:
+        #         mask_weights = torch.ones(1, 1, N, N, self.head_ratio, device='cuda')
+        #         # masks_weights [1, 1, N, N, HR]
+        #     self._mask_weights = mask_weights
+        
+        print(
+            f'[SWIN] <WindowAttention> [FISHPP]',
+            f'global[{global_proj_type}]',
+            f'mask[{mask_type}{mask_levels}]',
+            f'heads[{global_heads}->{num_heads}]',
+            f'qkv[{dim}->{total_dim}]',
+        )
 
     def forward(self, x, mask=None):
         """
@@ -220,8 +309,17 @@ class WindowAttention_FishPP(nn.Module):
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
         B_, N, C = x.shape
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+        B = B_
+        
+        # qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        # q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+        
+        # -> [B, N, 2*global_dim + dim]
+        qkv = self.qkv(x)
+        qkv = qkv.reshape(B, N, self.total_heads, self.head_dim).permute(0, 2, 1, 3).contiguous()
+        q = qkv[:, : self.global_heads]
+        k = qkv[:, self.global_heads : self.global_heads * 2]
+        v = qkv[:, self.global_heads * 2 : ]
 
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
@@ -231,6 +329,47 @@ class WindowAttention_FishPP(nn.Module):
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
         attn = attn + relative_position_bias.unsqueeze(0)
 
+        # FishPP:
+        # masks [1, 1, N, N, Level] -> [1, 1, N, N, HR / H / GH*H]
+        # mask_base [1, 1, N, N, 1]
+        mask_weights = self.masks @ self.mask_proj
+        
+        if self.global_proj_type == 'mix':
+            mask_weights = mask_weights.reshape([1, N, N, self.global_heads, self.num_heads])
+            mask_weights = mask_weights.permute(0, 3, 1, 2, 4)
+            # masks_weights [1, GH, N, N, H]
+        elif self.global_proj_type == 'full':
+            mask_weights = mask_weights.reshape([1, N, N, self.global_heads, self.head_ratio])
+            mask_weights = mask_weights.permute(0, 3, 1, 2, 4)
+            # masks_weights [1, GH, N, N, HR]
+        
+        # attn [B, GH, N, N] x masks [1, 1/GH, N, N, HR/H] -> [B, GH, N, N, HR/H]
+        attn = attn[..., None] * mask_weights
+        
+        if self.global_proj_type == 'mix':
+            # [B, GH, N, N, H] -> [B, N, N, H]
+            attn = torch.sum(attn, dim=-4, keepdim=False)
+            # [B, N, N, H] -> [B, N, N, GH, HR]
+            attn = attn.reshape([B, N, N, self.global_heads, self.head_ratio])
+            # [B, N, N, GH, HR] -> [B, GH, N, N, HR]
+            attn = attn.permute(0, 3, 1, 2, 4)
+        
+        # attn: [B, GH, N, N, HR]
+        
+        if self.is_non_linear:
+            # changed from HR->HR to H->H
+            # attn: [B, GH, N, N, HR] -> [B, N, N, H]
+            attn = attn.permute(0, 2, 3, 1, 4).contiguous().reshape(B, N, N, self.num_heads)
+            attn = nn.functional.relu(attn)
+            attn = self.head_proj(attn)
+            # [B, N, N, H] -> [B, H, N, N]
+            attn = attn.permute(0, 3, 1, 2).contiguous()
+        else:
+            # [B, GH, N, N, HR] -> [B, GH, HR, N, N] -> [B, H, N, N]
+            attn = attn.permute(0, 1, 4, 2, 3).contiguous().reshape(B, self.num_heads, N, N)
+        
+        
+        # NOTE: mask is applied AFTER fish++
         if mask is not None:
             nW = mask.shape[0]
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
@@ -284,7 +423,10 @@ class SwinTransformerBlock(nn.Module):
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=nn.GELU, norm_layer=nn.LayerNorm):
+                 act_layer=nn.GELU, norm_layer=nn.LayerNorm,
+                 fishpp=False,
+                 **kwargs,
+                 ):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -299,9 +441,17 @@ class SwinTransformerBlock(nn.Module):
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
         self.norm1 = norm_layer(dim)
-        self.attn = WindowAttention(
-            dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
-            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
+        
+        if fishpp:
+            self.attn = WindowAttention_FishPP(
+                dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
+                qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop,
+                **kwargs,
+                )
+        else:
+            self.attn = WindowAttention(
+                dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
+                qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -462,7 +612,9 @@ class BasicLayer(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
+                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
+                 **kwargs,
+                 ):
 
         super().__init__()
         self.dim = dim
@@ -479,7 +631,9 @@ class BasicLayer(nn.Module):
                                  qkv_bias=qkv_bias, qk_scale=qk_scale,
                                  drop=drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                                 norm_layer=norm_layer)
+                                 norm_layer=norm_layer,
+                                 **kwargs,
+                                 )
             for i in range(depth)])
 
         # patch merging layer
@@ -712,15 +866,24 @@ class SwinTransformer_FishPP(nn.Module):
         patch_norm (bool): If True, add normalization after patch embedding. Default: True
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
     """
-
+    # TODO: implement stage_limit_offset
     def __init__(self, img_size=224, patch_size=4, in_chans=3, num_classes=1000,
-                 embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
-                 window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
-                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
-                 norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False,
-                 
-                 **kwargs):
+                embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
+                window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
+                drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
+                norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
+                use_checkpoint=False,
+                
+                mask_type='dist',
+                mask_levels=3,
+                
+                global_heads_ratio=3,
+                non_linear=0,
+                non_linear_bias=1,
+                global_proj_type='mix',
+                stage_limit=-1,
+                
+                **kwargs):
         super().__init__()
 
         self.num_classes = num_classes
@@ -748,23 +911,81 @@ class SwinTransformer_FishPP(nn.Module):
 
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
-
+        
+        mask_types = ['dist', 'distq']
+        assert mask_type in mask_types, f'[SWIN] only dist-based mask_type allowed, one of {mask_types}'
+        assert stage_limit <= len(depths)
+        self.stage_limit = stage_limit
+        if self.stage_limit <= 0:
+            self.stage_limit = -1
+            self.fishpp_stages = list(range(len(depths)))
+        else:
+            self.fishpp_stages = list(range(self.stage_limit))
+        
+        assert len(self.fishpp_stages) >= 1, '??'
+        
+        self.global_heads_ratio = global_heads_ratio
+        self.global_heads = [
+            num_heads[i] / global_heads_ratio
+            for i in range(len(depths))
+        ]
+        assert all([
+            v % 1 == 0
+            for i, v in enumerate(self.global_heads)
+            if i in self.fishpp_stages
+        ]), f'heads{num_heads} for stages{self.fishpp_stages} must be divisible by global_heads_ratio[{global_heads_ratio}]'
+        self.global_heads = [int(v) for v in self.global_heads]
+        
+        # for i in self.fishpp_stages:
+        #     _global_heads = num_heads[i] / global_heads_ratio
+        #     assert _global_heads % 1 == 0, f'heads{num_heads} for stages{self.fishpp_stages} must be divisible by global_heads_ratio[{global_heads_ratio}]'
+        #     self.global_heads.append(int(_global_heads))
+        
+        self.mask_type = mask_type
+        self.token_grid_size = window_size
+        self.mask_levels = mask_levels
+        masks, mask_base, _ = H_Matrix_Masks.get_masks(
+            mask_type=self.mask_type,
+            cls_token_type='sum',
+            cls_token_pos=None,
+            cls_token_count=0,
+            token_grid_size=self.token_grid_size,
+            mask_levels=self.mask_levels,
+        )
+        masks = torch.tensor(
+            masks,
+            dtype=torch.float32, device='cuda', requires_grad=False,)
+        
         # build layers
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
-            layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
-                               input_resolution=(patches_resolution[0] // (2 ** i_layer),
-                                                 patches_resolution[1] // (2 ** i_layer)),
-                               depth=depths[i_layer],
-                               num_heads=num_heads[i_layer],
-                               window_size=window_size,
-                               mlp_ratio=self.mlp_ratio,
-                               qkv_bias=qkv_bias, qk_scale=qk_scale,
-                               drop=drop_rate, attn_drop=attn_drop_rate,
-                               drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                               norm_layer=norm_layer,
-                               downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
-                               use_checkpoint=use_checkpoint)
+            layer = BasicLayer(
+                dim=int(embed_dim * 2 ** i_layer),
+                input_resolution=(patches_resolution[0] // (2 ** i_layer),
+                                    patches_resolution[1] // (2 ** i_layer)),
+                depth=depths[i_layer],
+                num_heads=num_heads[i_layer],
+                window_size=window_size,
+                mlp_ratio=self.mlp_ratio,
+                qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate,
+                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                norm_layer=norm_layer,
+                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
+                use_checkpoint=use_checkpoint,
+                
+                fishpp=i_layer in self.fishpp_stages,
+                masks=masks,
+                mask_levels=mask_levels,
+                
+                global_heads=self.global_heads[i_layer],
+                mask_type=self.mask_type,
+                
+                non_linear=non_linear,
+                non_linear_bias=non_linear_bias,
+                global_proj_type=global_proj_type,
+                # metrics_test=False,
+            )
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)

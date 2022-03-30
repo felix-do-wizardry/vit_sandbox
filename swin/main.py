@@ -33,6 +33,7 @@ try:
 except ImportError:
     amp = None
 
+import json, os, time, wandb
 
 def parse_option():
     parser = argparse.ArgumentParser('Swin Transformer training and evaluation script', add_help=False)
@@ -68,7 +69,10 @@ def parse_option():
 
     # distributed training
     parser.add_argument("--local_rank", type=int, required=True, help='local rank for DistributedDataParallel')
-
+    
+    # TODO: add wandb
+    parser.add_argument('--wandb', default=1, type=int, help='wandb')
+    
     args, unparsed = parser.parse_known_args()
 
     config = get_config(args)
@@ -76,13 +80,61 @@ def parse_option():
     return args, config
 
 
-def main(config):
+def main(config, args):
+    
+    time_stamp = time.strftime('%y%m%d_%H%M%S')
+    _acml = max(1, config.TRAIN.ACCUMULATION_STEPS)
+    _bs_eff = _acml * config.DATA.BATCH_SIZE * dist.get_world_size()
+    
+    model_name_short = config.MODEL.NAME.split('_')[0]
+    _fish_type_str = '_'.join(config.MODEL.NAME.split('_')[1:])
+    exp_name = '_'.join([
+        time_stamp,
+        model_name_short,
+        _fish_type_str,
+        f'bs{config.DATA.BATCH_SIZE}x{dist.get_world_size()}' + (
+            f'x{args.accumulation_steps}' if args.accumulation_steps >= 2 else ''),
+    ])
+    
+    if dist.get_rank() == 0 and args.wandb:
+        
+        _project = f'ImageNet_fishpp_swin'
+        wandb.init(
+            project=_project,
+            entity='fpt-team',
+            config={},
+            name=exp_name,
+        )
+        
+        # set all other train/ metrics to use this step
+        _step_metric = 'epoch'
+        wandb.define_metric(_step_metric)
+        wandb.define_metric("*", step_metric=_step_metric)
+        
+        wandb.define_metric("test_acc1", summary="max")
+        wandb.define_metric("test_acc5", summary="max")
+        wandb.define_metric("train_mem_gb", summary="max")
+        
+        wandb.run.summary['timestamp'] = time_stamp
+        wandb.run.summary['epoch'] = -1
+        wandb.run.summary['acc'] = 0.0
+        wandb.run.summary['acc5'] = 0.0
+        wandb.run.summary['type'] = _fish_type_str
+        wandb.run.summary['bs'] = config.DATA.BATCH_SIZE
+        wandb.run.summary['bs_eff'] = _bs_eff
+        wandb.run.summary['gpu'] = dist.get_world_size()
+        wandb.run.summary['image_size'] = config.DATA.IMG_SIZE
+        # wandb.run.summary.update()
+        
+        wandb.config.update(args)
+        print(f"Initiated WandB project[{_project}] name[{exp_name}]")
+        
     dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)
 
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
     model = build_model(config)
     model.cuda()
-    logger.info(str(model))
+    # logger.info(str(model))
 
     optimizer = build_optimizer(config, model)
     if config.AMP_OPT_LEVEL != "O0":
@@ -94,7 +146,7 @@ def main(config):
     logger.info(f"number of params: {n_parameters}")
     if hasattr(model_without_ddp, 'flops'):
         flops = model_without_ddp.flops()
-        logger.info(f"number of GFLOPs: {flops / 1e9}")
+        logger.info(f"[OUT_OF_DATE] number of GFLOPs: {flops / 1e9}")
 
     lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
 
@@ -107,6 +159,7 @@ def main(config):
         criterion = torch.nn.CrossEntropyLoss()
 
     max_accuracy = 0.0
+    max_accuracy5 = 0.0
 
     if config.TRAIN.AUTO_RESUME:
         resume_file = auto_resume_helper(config.OUTPUT)
@@ -141,15 +194,48 @@ def main(config):
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
         data_loader_train.sampler.set_epoch(epoch)
 
-        train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
+        start_time_epoch = time.time()
+        train_stats = train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
+        elapsed_time_epoch_train = time.time() - start_time_epoch
 
         acc1, acc5, loss = validate(config, data_loader_val, model)
+        test_stats = {
+            'acc1': float(acc1),
+            'acc5': float(acc5),
+            'loss': float(loss),
+        }
+        elapsed_time_epoch_test = time.time() - start_time_epoch - elapsed_time_epoch_train
+        
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
         max_accuracy = max(max_accuracy, acc1)
+        max_accuracy5 = max(max_accuracy5, acc5)
         logger.info(f'Max accuracy: {max_accuracy:.2f}%')
-
+        
+        _mem_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
+        # speed_train = 1_281_167 / elapsed_time_epoch_train
+        # speed_test = 50_000 / elapsed_time_epoch_test
+        
+        if dist.get_rank() == 0 and args.wandb:
+            wandb_dict = {
+                'epoch': epoch,
+                **{f'train_{k}': v for k, v in train_stats.items()},
+                **{f'test_{k}': v for k, v in test_stats.items()},
+                'train_time_h': elapsed_time_epoch_train / 3600,
+                'test_time_h': elapsed_time_epoch_test / 3600,
+                # 'elapsed_time_h': elapsed_time / 3600,
+                'train_mem_gb': float(_mem_gb),
+                # 'speed_train': speed_train,
+                # 'speed_test': speed_test,
+                # **metrics,
+            }
+            wandb.run.summary['epoch'] = int(epoch)
+            wandb.run.summary['acc'] = float(max_accuracy)
+            wandb.run.summary['acc5'] = float(max_accuracy5)
+            wandb.log(wandb_dict)
+            print(f'[WandB]: {wandb_dict}')
+    
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logger.info('Training time {}'.format(total_time_str))
@@ -234,7 +320,11 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 f'mem {memory_used:.0f}MB')
     epoch_time = time.time() - start
     logger.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
-
+    
+    return {
+        'loss': float(loss_meter.avg),
+        'lr': lr,
+    }
 
 @torch.no_grad()
 def validate(config, data_loader, model):
@@ -304,7 +394,7 @@ def throughput(data_loader, model, logger):
 
 
 if __name__ == '__main__':
-    _, config = parse_option()
+    args, config = parse_option()
 
     if config.AMP_OPT_LEVEL != "O0":
         assert amp is not None, "amp not installed!"
@@ -354,4 +444,4 @@ if __name__ == '__main__':
     # print config
     logger.info(config.dump())
 
-    main(config)
+    main(config, args)
