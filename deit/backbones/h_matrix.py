@@ -2,12 +2,27 @@
 import numpy as np
 import json, os, time
 
-# %%
 # import torch
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 
+
+# %%
+MASK_TYPES = [
+    'h', 'hdist',
+    'dist', 'distq',
+    'cross', 'crossq',
+    # 'col', 'row',
+    # 'x',
+]
+
+CLS_TOKEN_TYPES = [
+    'copy',
+    'pos',
+    'mask',
+    'sum',
+]
 
 # %%
 class H_Matrix:
@@ -27,9 +42,9 @@ class H_Matrix:
         level (int): level of h matrix
         '''
         
-        assert mask_type in ['dist', 'hdist', 'dist', 'distq']
+        assert mask_type in MASK_TYPES, f'mask_type[{mask_type}] must be one of {MASK_TYPES}'
         self.mask_type = mask_type
-        self.is_dist = mask_type in ['dist', 'distq']
+        self.is_dist = mask_type in ['dist', 'distq', 'cross', 'crossq',]
         
         assert cls_token_order in ['first']
         
@@ -103,14 +118,19 @@ class H_Matrix:
         match   = np.zeros([n_img, n_img], dtype=int) - 1
         match_h = np.zeros([n_img, n_img], dtype=int) - 1
         dist    = np.zeros([n_img, n_img], dtype=float)
+        x_dist  = np.zeros([n_img, n_img], dtype=float)
+        y_dist  = np.zeros([n_img, n_img], dtype=float)
         
         for iq in range(n_img):
-            pq = (int(iq // t), iq % t)
+            pq = np.array([int(iq // t), iq % t], dtype=float)
             
             for ik in range(n_img):
-                pk = (int(ik // t), ik % t)
+                pk = np.array([int(ik // t), ik % t], dtype=float)
                 
-                dist[iq, ik] = np.sqrt(np.sum((np.array(pq) - np.array(pk)) ** 2)) / t
+                dist[iq, ik] = np.sqrt(np.sum((pq - pk) ** 2)) / t
+                y_dist[iq, ik] = np.abs(pq[0] - pk[0])
+                x_dist[iq, ik] = np.abs(pq[1] - pk[1])
+                
                 
                 x_match = int(cxf[iq] == cxf[ik])
                 y_match = int(cyf[iq] == cyf[ik])
@@ -126,25 +146,40 @@ class H_Matrix:
         assert np.all(match >= 0), f'?? {np.min(match)}'
         assert np.all(match_h >= 0), f'?? {np.min(match_h)}'
         
+        # padding for CLS tokens
         if self.cls_token_count > 0:
             # CLS
             match = np.pad(match, pad_width=self.cls_token_pad, constant_values=-1)
             match_h = np.pad(match_h, pad_width=self.cls_token_pad, constant_values=-1)
             dist = np.pad(dist, pad_width=self.cls_token_pad, constant_values=0.)
+            y_dist = np.pad(y_dist, pad_width=self.cls_token_pad, constant_values=0)
+            x_dist = np.pad(x_dist, pad_width=self.cls_token_pad, constant_values=0)
             
-            if self.is_dist and self.cls_token_pos is not None:
+            if self.cls_token_pos is not None:
                 p_cls = np.array(self.cls_token_pos).astype(float) * (t - 1)
                 for i in range(n_img):
                     p = np.array([int(i // t), i % t]).astype(float)
+                    
                     # CLS q
-                    dist[0, i + self.cls_token_count] = np.sqrt(np.sum((p_cls - p) ** 2)) / t
+                    dist[:self.cls_token_count, i + self.cls_token_count] = np.sqrt(np.sum((p_cls - p) ** 2)) / t
+                    y_dist[:self.cls_token_count, i + self.cls_token_count] = np.abs(p_cls[0] - p[0])
+                    x_dist[:self.cls_token_count, i + self.cls_token_count] = np.abs(p_cls[1] - p[1])
+                    
                     # CLS k
-                    dist[i + self.cls_token_count, 0] = np.sqrt(np.sum((p_cls - p) ** 2)) / t
+                    dist[i + self.cls_token_count, :self.cls_token_count] = np.sqrt(np.sum((p_cls - p) ** 2)) / t
+                    y_dist[i + self.cls_token_count, :self.cls_token_count] = np.abs(p_cls[0] - p[0])
+                    x_dist[i + self.cls_token_count, :self.cls_token_count] = np.abs(p_cls[1] - p[1])
+                
                 # CLS qk
-                dist[0, 0] = 0.
+                dist[:self.cls_token_count, :self.cls_token_count] = 0.
+                y_dist[:self.cls_token_count, :self.cls_token_count] = 0.
+                x_dist[:self.cls_token_count, :self.cls_token_count] = 0.
+        
+        cross_dist = np.min([y_dist, x_dist], axis=0)
+        
+        digitize_levels = level + 1
         
         dist_neg = -dist
-        digitize_levels = level + 1
         dist_dig = np.clip(np.digitize(
             dist_neg,
             np.percentile(
@@ -166,15 +201,45 @@ class H_Matrix:
             )
             for i in range(dist.shape[0])
         ], 1, digitize_levels) - 1
+        
+        
+        cross_dist_neg = -cross_dist
+        cross_dist_dig = np.clip(np.digitize(
+            cross_dist_neg,
+            np.percentile(
+                cross_dist_neg,
+                np.linspace(0, 100, digitize_levels + 1),
+            ),
+        ), 1, digitize_levels) - 1
+        
+        _cross_dist_pct = np.percentile(
+            cross_dist_neg,
+            np.linspace(0, 100, digitize_levels + 1),
+            axis=1,
+        )
 
-        # CLS
-        if self.cls_token_count > 0:
-            # CLS
-            if self.is_dist and self.cls_token_pos is None:
-                dist_dig[:self.cls_token_count, :] = -1
-                dist_dig[:, :self.cls_token_count] = -1
-                distq_dig[:self.cls_token_count, :] = -1
-                distq_dig[:, :self.cls_token_count] = -1
+        cross_distq_dig = np.clip([
+            np.digitize(
+                cross_dist_neg[i],
+                _cross_dist_pct[:, i],
+            )
+            for i in range(cross_dist.shape[0])
+        ], 1, digitize_levels) - 1
+
+
+        # CLS - if not pos - set all dist cls entries to -1
+        if self.cls_token_count > 0 and self.cls_token_pos is None:
+            # CLS q
+            dist_dig[:self.cls_token_count, :] = -1
+            distq_dig[:self.cls_token_count, :] = -1
+            cross_dist_dig[:self.cls_token_count, :] = -1
+            cross_distq_dig[:self.cls_token_count, :] = -1
+            
+            # CLS k
+            dist_dig[:, :self.cls_token_count] = -1
+            distq_dig[:, :self.cls_token_count] = -1
+            cross_dist_dig[:, :self.cls_token_count] = -1
+            cross_distq_dig[:, :self.cls_token_count] = -1
                 
         
         # shape = [t*t+1, t*t+1], range = [-1, level]
@@ -183,6 +248,8 @@ class H_Matrix:
         self.dist = dist
         self.dist_dig = dist_dig
         self.distq_dig = distq_dig
+        self.cross_dist_dig = cross_dist_dig
+        self.cross_distq_dig = cross_distq_dig
         
         
         if mask_type in ['h']:
@@ -193,8 +260,16 @@ class H_Matrix:
             self.indexed_mask = self.dist_dig
         elif mask_type in ['distq']:
             self.indexed_mask = self.distq_dig
+        elif mask_type in ['cross']:
+            self.indexed_mask = self.cross_dist_dig
+        elif mask_type in ['crossq']:
+            self.indexed_mask = self.cross_distq_dig
         else:
             raise NotImplementedError(f'`mask_type`[{mask_type}] has not been implemented')
+    
+    @classmethod
+    def get_dist(cls, p0, p1, t):
+        return np.sqrt(np.sum((p0 - p1) ** 2)) / t
 
 
 # %%
@@ -226,26 +301,16 @@ class H_Matrix_Masks:
                 mask_levels=3,
                 ):
         
-        # mask_type = 'hdist'
-        # cls_token_type = 'sum'
-        # cls_token_pos = None
-
-        # mask_type = 'dist'
-        # mask_type = 'distq'
-        # cls_token_type = 'pos'
-        # cls_token_pos = 0.5
-        
-        assert mask_type in ['h', 'hdist', 'dist', 'distq']
-        assert cls_token_type in ['copy', 'pos', 'mask', 'sum']
+        assert mask_type in MASK_TYPES, f'mask_type[{mask_type}] must be one of {MASK_TYPES}'
+        assert cls_token_type in CLS_TOKEN_TYPES, f'cls_token_type[{cls_token_type}] must be one of {CLS_TOKEN_TYPES}'
         if cls_token_type == 'pos':
             assert isinstance(cls_token_pos, (float, int))
             assert 1 >= cls_token_pos >= 0
         else:
             cls_token_pos = None
-
-        # mask_levels = 3
+        
         token_count = int(token_grid_size ** 2) + cls_token_count
-
+        
         hm = H_Matrix(
             t=token_grid_size,
             level=mask_levels - 1,
@@ -254,7 +319,7 @@ class H_Matrix_Masks:
             cls_token_order='first',
             cls_token_pos=cls_token_pos,
         )
-
+        
         indexed_mask = hm.indexed_mask
         mask_levels_final = mask_levels
 
@@ -446,45 +511,56 @@ class H_Matrix_Masks:
         
 
 # %%
+# _mask_type='cross'
+_mask_type='crossq'
 # _mask_type='distq'
-# _cls_token_type='pos'
-# _cls_token_pos=0.5
+_cls_token_type='pos'
+_cls_token_pos=0.5
 
 # _mask_type='dist'
 # _cls_token_type='pos'
 # _cls_token_pos=0.5
 
-# # _mask_type='hdist'
-# # _cls_token_type='sum'
-# # _cls_token_pos=None
+# _mask_type='hdist'
+# _cls_token_type='sum'
+# _cls_token_pos=None
 
 
-# _cls_token_count=0
-# _token_grid_size=7
-# _mask_levels=5
+_cls_token_count=1
+_token_grid_size=14
+_mask_levels=3
 
-# masks, mask_base, mask_levels_final = H_Matrix_Masks.get_masks(
-#     mask_type=_mask_type,
-#     cls_token_type=_cls_token_type,
-#     cls_token_pos=_cls_token_pos,
-#     cls_token_count=_cls_token_count,
-#     token_grid_size=_token_grid_size,
-#     mask_levels=_mask_levels,
-# )
+masks, mask_base, mask_levels_final = H_Matrix_Masks.get_masks(
+    mask_type=_mask_type,
+    cls_token_type=_cls_token_type,
+    cls_token_pos=_cls_token_pos,
+    cls_token_count=_cls_token_count,
+    token_grid_size=_token_grid_size,
+    mask_levels=_mask_levels,
+)
 
-# figs = H_Matrix_Masks.plot_masks(
-#     masks,
-#     cls_token_count=_cls_token_count,
-#     token_grid_size=_token_grid_size,
-#     mask_levels_final=mask_levels_final,
-#     grid_sep=2,
-#     plot_size=[800, 800],
-# )
-# _ = [_fig.show() for _fig in figs]
+figs = H_Matrix_Masks.plot_masks(
+    masks,
+    cls_token_count=_cls_token_count,
+    token_grid_size=_token_grid_size,
+    mask_levels_final=mask_levels_final,
+    grid_sep=2,
+    plot_size=[800, 800],
+)
+_ = [_fig.show() for _fig in figs]
 
 # %%
+# dp = os.path.join('plots', 't14')
+dp = '../plots/t14'
+_cls_str = _cls_token_type
+if _cls_token_type == 'pos':
+    _cls_str = f'pos{_cls_token_pos:.1f}'
+
+figs[0].write_image(os.path.join(dp, f'mask_{_mask_type}_hl{_mask_levels}_{_cls_str}.png'))
+figs[1].write_image(os.path.join(dp, f'mask_grid_{_mask_type}_hl{_mask_levels}.png'))
 
 
+# %%
 
 
 

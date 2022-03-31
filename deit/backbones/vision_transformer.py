@@ -36,19 +36,20 @@ from timm.models.helpers import build_model_with_cfg, named_apply, adapt_input_c
 from timm.models.layers import PatchEmbed, Mlp, DropPath, trunc_normal_, lecun_normal_
 from timm.models.registry import register_model
 
-from backbones.h_matrix import H_Matrix, H_Matrix_Masks
+from backbones.h_matrix import H_Matrix, H_Matrix_Masks, MASK_TYPES
 import numpy as np
 
 _logger = logging.getLogger(__name__)
 
 # %%
 DEBUG = 1
-FISH_MASK_TYPES = [
-    # 'h1d',
-    'h',
-    'hdist',
-    'dist',
-]
+# FISH_MASK_TYPES = [
+#     # 'h1d',
+#     'h',
+#     'hdist',
+#     'dist',
+#     'distq',
+# ]
 
 # %%
 def _cfg(url='', **kwargs):
@@ -241,8 +242,6 @@ class Attention_FishPP(nn.Module):
         # self.global_full_mix = bool(global_full_mix)
         assert global_proj_type in ['base', 'full', 'mix']
         self.global_proj_type = global_proj_type
-        
-        assert mask_type in FISH_MASK_TYPES, f'mask_type[{mask_type}] not in {FISH_MASK_TYPES}'
         
         self.num_heads = num_heads
         assert self.num_heads % self.global_heads == 0
@@ -529,7 +528,7 @@ class VisionTransformer_FishPP(nn.Module):
         
         assert isinstance(global_heads, int) and global_heads >= 1
         self.global_heads = global_heads
-        assert mask_type in FISH_MASK_TYPES, f'mask_type[{mask_type}] not in {FISH_MASK_TYPES}'
+        assert mask_type in MASK_TYPES, f'mask_type[{mask_type}] not in {MASK_TYPES}'
         self.mask_type = mask_type
         
         self.token_grid_size = int(img_size // patch_size)
@@ -543,7 +542,7 @@ class VisionTransformer_FishPP(nn.Module):
         
         # if cls_token_pos >= 0 and self.mask_type == 'dist':
         if self.cls_token_type == 'pos':
-            assert self.mask_type == 'dist'
+            assert self.mask_type in ['dist', 'distq']
             assert isinstance(cls_token_pos, (float, int))
             assert 0 <= cls_token_pos <= 1
             self.cls_token_pos = float(np.clip(cls_token_pos, 0, 1))

@@ -228,7 +228,7 @@ def main(args):
     if args.fishpp:
         assert args.fish_global_heads >= 1
         assert args.fish_mask_levels >= 0
-        assert args.fish_mask_type in ['h1d', 'h', 'hdist', 'dist']
+        # assert args.fish_mask_type in ['h', 'hdist', 'dist', 'distq']
         _fish_type_str_head = f'g{args.fish_global_heads}'
         if args.fish_global_proj_type != 'base':
             _fish_type_str_head = _fish_type_str_head + args.fish_global_proj_type[:1]
