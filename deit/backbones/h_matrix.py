@@ -551,11 +551,12 @@ if __name__ == '__main__':
         
         # continue
         if save_plots:
-            _cls_str = _cls_token_type
-            if _cls_token_type == 'pos':
-                _cls_str = f'pos{_cls_token_pos:.1f}'
+            # _cls_str = _cls_token_type
+            # if _cls_token_type == 'pos':
+            #     _cls_str = f'pos{_cls_token_pos:.1f}'
             
-            figs[0].write_image(os.path.join(dp, f'mask_{_mask_type}_hl{_mask_levels}_{_cls_str}.png'))
+            # figs[0].write_image(os.path.join(dp, f'mask_{_mask_type}_hl{_mask_levels}_{_cls_str}.png'))
+            figs[0].write_image(os.path.join(dp, f'mask_{_mask_type}_hl{_mask_levels}.png'))
             figs[1].write_image(os.path.join(dp, f'mask_grid_{_mask_type}_hl{_mask_levels}.png'))
 
 

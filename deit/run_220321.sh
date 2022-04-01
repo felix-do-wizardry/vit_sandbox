@@ -72,8 +72,8 @@ CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=1 --u
 
 
 
-# C
-# C_dist_0 dist sum g2
+# D
+# D_dist_0 dist3 sum g2 r8
 CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 12390 main.py \
     --model deit_small_patch16_224 --batch-size 256 --accumulation_steps 4 \
     --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
@@ -82,13 +82,22 @@ CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=1 --u
     --fish_cls_token_type sum --fish_cls_token_pos -1 \
     --fish_global_proj_type mix --fish_layer_limit 8
 
-# C_dist_0 dist sum g2m
+# D_dist_1 dist3 sum g2m r8
 CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 12391 main.py \
     --model deit_small_patch16_224 --batch-size 1 --accumulation_steps 4 \
     --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
     --fishpp 1 --fish_global_heads 2 --fish_mask_levels 3 --fish_mask_type dist \
     --fish_non_linear 0 --fish_non_linear_bias 0 \
     --fish_cls_token_type sum --fish_cls_token_pos -1 \
+    --fish_global_proj_type mix --fish_layer_limit 8
+
+# D_dist_2 distq4 pos0.5 g2m r8
+CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 12391 main.py \
+    --model deit_small_patch16_224 --batch-size 1 --accumulation_steps 4 \
+    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
+    --fishpp 1 --fish_global_heads 2 --fish_mask_levels 4 --fish_mask_type distq \
+    --fish_non_linear 0 --fish_non_linear_bias 0 \
+    --fish_cls_token_type sum --fish_cls_token_pos 0.5 \
     --fish_global_proj_type mix --fish_layer_limit 8
 
 
