@@ -511,53 +511,52 @@ class H_Matrix_Masks:
         
 
 # %%
-# _mask_type='cross'
-_mask_type='crossq'
-# _mask_type='distq'
-_cls_token_type='pos'
-_cls_token_pos=0.5
-
-# _mask_type='dist'
-# _cls_token_type='pos'
-# _cls_token_pos=0.5
-
-# _mask_type='hdist'
-# _cls_token_type='sum'
-# _cls_token_pos=None
-
-
-_cls_token_count=1
-_token_grid_size=14
-_mask_levels=3
-
-masks, mask_base, mask_levels_final = H_Matrix_Masks.get_masks(
-    mask_type=_mask_type,
-    cls_token_type=_cls_token_type,
-    cls_token_pos=_cls_token_pos,
-    cls_token_count=_cls_token_count,
-    token_grid_size=_token_grid_size,
-    mask_levels=_mask_levels,
-)
-
-figs = H_Matrix_Masks.plot_masks(
-    masks,
-    cls_token_count=_cls_token_count,
-    token_grid_size=_token_grid_size,
-    mask_levels_final=mask_levels_final,
-    grid_sep=2,
-    plot_size=[800, 800],
-)
-_ = [_fig.show() for _fig in figs]
-
-# %%
-# dp = os.path.join('plots', 't14')
-dp = '../plots/t14'
-_cls_str = _cls_token_type
-if _cls_token_type == 'pos':
-    _cls_str = f'pos{_cls_token_pos:.1f}'
-
-figs[0].write_image(os.path.join(dp, f'mask_{_mask_type}_hl{_mask_levels}_{_cls_str}.png'))
-figs[1].write_image(os.path.join(dp, f'mask_grid_{_mask_type}_hl{_mask_levels}.png'))
+if __name__ == '__main__':
+    save_plots = True
+    
+    _cls_token_count = 1
+    _token_grid_size = 14
+    _mask_levels = 4
+    
+    dp = f'../plots/t{_token_grid_size}_hl{_mask_levels}'
+    if save_plots and not os.path.isdir(dp):
+        os.makedirs(dp)
+    
+    for _mask_type in ['dist', 'distq', 'cross', 'crossq']:
+        _cls_token_type = 'pos'
+        _cls_token_pos = 0.5
+        
+        if _mask_type in ['h', 'hdist']:
+            _cls_token_type = 'sum'
+            _cls_token_pos = None
+        
+        masks, mask_base, mask_levels_final = H_Matrix_Masks.get_masks(
+            mask_type=_mask_type,
+            cls_token_type=_cls_token_type,
+            cls_token_pos=_cls_token_pos,
+            cls_token_count=_cls_token_count,
+            token_grid_size=_token_grid_size,
+            mask_levels=_mask_levels,
+        )
+        
+        figs = H_Matrix_Masks.plot_masks(
+            masks,
+            cls_token_count=_cls_token_count,
+            token_grid_size=_token_grid_size,
+            mask_levels_final=mask_levels_final,
+            grid_sep=2,
+            plot_size=[800, 800],
+        )
+        _ = [_fig.show() for _fig in figs]
+        
+        # continue
+        if save_plots:
+            _cls_str = _cls_token_type
+            if _cls_token_type == 'pos':
+                _cls_str = f'pos{_cls_token_pos:.1f}'
+            
+            figs[0].write_image(os.path.join(dp, f'mask_{_mask_type}_hl{_mask_levels}_{_cls_str}.png'))
+            figs[1].write_image(os.path.join(dp, f'mask_grid_{_mask_type}_hl{_mask_levels}.png'))
 
 
 # %%
