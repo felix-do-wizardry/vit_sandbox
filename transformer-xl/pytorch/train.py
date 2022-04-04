@@ -16,6 +16,10 @@ from mem_transformer import MemTransformerLM
 from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel
 
+
+import warnings
+warnings.simplefilter("once", Warning)
+
 parser = argparse.ArgumentParser(description='PyTorch Transformer Language Model')
 parser.add_argument('--data', type=str, default='../data/wikitext-103',
                     help='location of the data corpus')
@@ -70,20 +74,8 @@ parser.add_argument('--clip', type=float, default=0.25,
                     help='gradient clipping')
 parser.add_argument('--clip_nonemb', action='store_true',
                     help='only clip the gradient of non-embedding params')
-parser.add_argument('--max_step', type=int, default=100000,
-                    help='upper epoch limit')
-parser.add_argument('--batch_size', type=int, default=60,
-                    help='batch size')
 parser.add_argument('--batch_chunk', type=int, default=1,
                     help='split batch into chunks to save memory')
-parser.add_argument('--tgt_len', type=int, default=70,
-                    help='number of tokens to predict')
-parser.add_argument('--eval_tgt_len', type=int, default=50,
-                    help='number of tokens to predict for evaluation')
-parser.add_argument('--ext_len', type=int, default=0,
-                    help='length of the extended context')
-parser.add_argument('--mem_len', type=int, default=0,
-                    help='length of the retained previous heads')
 parser.add_argument('--not_tied', action='store_true',
                     help='do not tie the word embedding and softmax weights')
 parser.add_argument('--seed', type=int, default=1111,
@@ -102,10 +94,6 @@ parser.add_argument('--multi_gpu', action='store_true',
                     help='use multiple GPU')
 parser.add_argument('--log-interval', type=int, default=200,
                     help='report interval')
-parser.add_argument('--eval-interval', type=int, default=4000,
-                    help='evaluation interval')
-parser.add_argument('--work_dir', default='LM-TFM', type=str,
-                    help='experiment directory.')
 parser.add_argument('--restart', action='store_true',
                     help='restart training from the saved checkpoint')
 parser.add_argument('--restart_dir', type=str, default='',
@@ -141,7 +129,37 @@ parser.add_argument('--static-loss-scale', type=float, default=1,
 parser.add_argument('--dynamic-loss-scale', action='store_true',
                     help='Use dynamic loss scaling.  If supplied, this argument'
                     ' supersedes --static-loss-scale.')
+
+
+parser.add_argument('--ext_len', type=int, default=0, help='length of the extended context')
+parser.add_argument('--work_dir', default='LM-TFM', type=str, help='experiment directory.')
+parser.add_argument('--max_step', type=int, default=200000, help='upper epoch limit')
+parser.add_argument('--eval-interval', type=int, default=2000, help='evaluation interval')
+parser.add_argument('--batch_size', type=int, default=60, help='batch size')
+parser.add_argument('--tgt_len', type=int, default=150, help='number of tokens to predict')
+parser.add_argument('--eval_tgt_len', type=int, default=150, help='number of tokens to predict for evaluation')
+parser.add_argument('--mem_len', type=int, default=150, help='length of the retained previous heads')
+parser.add_argument('--wandb', type=int, default=1)
+parser.add_argument('--exp_name', type=str, default='____')
+
+
 args = parser.parse_args()
+
+assert args.tgt_len == args.eval_tgt_len, f'tgt_len[{args.tgt_len}] != eval_tgt_len[{args.eval_tgt_len}] | [FISHPP] tgt_len must be the same for train and val'
+
+_time_stamp = time.strftime('%y%m%d_%H%M%S')
+args.exp_name = f'{_time_stamp}_{args.exp_name}'
+if args.wandb:
+    import wandb
+    _project = f'fishpp_wt103'
+    print(f'exp[{args.exp_name}]')
+    wandb.init(
+        project=_project,
+        entity='fpt-team',
+        config={},
+        name=args.exp_name,
+    )
+
 args.tied = not args.not_tied
 
 if args.d_embed < 0:
@@ -151,7 +169,7 @@ assert args.ext_len >= 0, 'extended context length must be non-negative'
 assert args.batch_size % args.batch_chunk == 0
 
 args.work_dir = '{}-{}'.format(args.work_dir, args.dataset)
-args.work_dir = os.path.join(args.work_dir, time.strftime('%Y%m%d-%H%M%S'))
+args.work_dir = os.path.join(args.work_dir, args.exp_name)
 logging = create_exp_dir(args.work_dir,
     scripts_to_save=['train.py', 'mem_transformer.py'], debug=args.debug)
 
@@ -273,6 +291,7 @@ if args.restart:
     model.apply(update_dropout)
     model.apply(update_dropatt)
 else:
+    # TODO: pass in fishpp kwargs (same class flow)
     model = MemTransformerLM(ntokens, args.n_layer, args.n_head, args.d_model,
         args.d_head, args.d_inner, args.dropout, args.dropatt,
         tie_weight=args.tied, d_embed=args.d_embed, div_val=args.div_val,
@@ -425,6 +444,7 @@ def train():
     else:
         mems = tuple()
     train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
+    cur_loss = 0.000001
     for batch, (data, target, seq_len) in enumerate(train_iter):
         model.zero_grad()
         if args.batch_chunk > 1:
@@ -493,12 +513,22 @@ def train():
             log_start_time = time.time()
 
         if train_step % args.eval_interval == 0:
+            assert train_step % args.log_interval == 0, '??'
             val_loss = evaluate(va_iter)
             logging('-' * 100)
             log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
                       '| valid loss {:5.2f}'.format(
                 train_step // args.eval_interval, train_step,
                 (time.time() - eval_start_time), val_loss)
+            log_dict = {
+                'epoch': int(epoch),
+                'val_step': int(train_step // args.eval_interval),
+                'train_step': int(train_step),
+                'val_ppl': math.exp(val_loss),
+                'train_ppl': math.exp(cur_loss),
+            }
+            wandb.log(log_dict)
+            print('\n\n\nlog_dict:', log_dict, '\n\n')
             if args.dataset in ['enwik8', 'text8']:
                 log_str += ' | bpc {:9.5f}'.format(val_loss / math.log(2))
             else:
