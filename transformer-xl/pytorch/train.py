@@ -16,6 +16,7 @@ from mem_transformer import MemTransformerLM
 from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel
 
+import wandb
 
 import warnings
 warnings.simplefilter("once", Warning)
@@ -142,6 +143,15 @@ parser.add_argument('--mem_len', type=int, default=150, help='length of the reta
 parser.add_argument('--wandb', type=int, default=1)
 parser.add_argument('--exp_name', type=str, default='____')
 
+parser.add_argument('--fishpp', type=int, default=0)
+parser.add_argument('--mask_type', type=str, default='h1d')
+parser.add_argument('--mask_levels', type=int, default=3)
+parser.add_argument('--non_linear', type=int, default=0)
+parser.add_argument('--non_linear_bias', type=int, default=1)
+parser.add_argument('--global_heads', type=int, default=1)
+parser.add_argument('--global_proj_type', type=str, default='mix')
+parser.add_argument('--layer_limit', type=int, default=-1)
+parser.add_argument('--layer_offset', type=int, default=0)
 
 args = parser.parse_args()
 
@@ -150,7 +160,6 @@ assert args.tgt_len == args.eval_tgt_len, f'tgt_len[{args.tgt_len}] != eval_tgt_
 _time_stamp = time.strftime('%y%m%d_%H%M%S')
 args.exp_name = f'{_time_stamp}_{args.exp_name}'
 if args.wandb:
-    import wandb
     _project = f'fishpp_wt103'
     print(f'exp[{args.exp_name}]')
     wandb.init(
@@ -159,6 +168,13 @@ if args.wandb:
         config={},
         name=args.exp_name,
     )
+    wandb.run.summary['timestamp'] = _time_stamp
+    wandb.run.summary['epoch'] = -1
+    wandb.run.summary['type'] = args.exp_name
+    wandb.run.summary['bs'] = args.batch_size
+    wandb.run.summary['bs_eff'] = args.batch_size
+    # wandb.run.summary.update()
+    wandb.config.update(args)
 
 args.tied = not args.not_tied
 
@@ -298,7 +314,20 @@ else:
         tie_projs=tie_projs, pre_lnorm=args.pre_lnorm, tgt_len=args.tgt_len,
         ext_len=args.ext_len, mem_len=args.mem_len, cutoffs=cutoffs,
         same_length=args.same_length, attn_type=args.attn_type,
-        clamp_len=args.clamp_len, sample_softmax=args.sample_softmax)
+        clamp_len=args.clamp_len, sample_softmax=args.sample_softmax,
+        fishpp=args.fishpp,
+        
+        mask_type=args.mask_type,
+        mask_levels=args.mask_levels,
+        non_linear=args.non_linear,
+        non_linear_bias=args.non_linear_bias,
+        
+        global_heads=args.global_heads,
+        global_proj_type=args.global_proj_type,
+        
+        layer_limit=args.layer_limit,
+        layer_offset=args.layer_offset,
+    )
     model.apply(weights_init)
     model.word_emb.apply(weights_init) # ensure embedding init is not overridden by out_layer in case of weight sharing
 args.n_all_param = sum([p.nelement() for p in model.parameters()])
@@ -435,7 +464,7 @@ def evaluate(eval_iter):
     return total_loss / total_len
 
 
-def train():
+def train(args):
     # Turn on training mode which enables dropout.
     global train_step, train_loss, best_val_loss, eval_start_time, log_start_time
     model.train()
@@ -527,7 +556,8 @@ def train():
                 'val_ppl': math.exp(val_loss),
                 'train_ppl': math.exp(cur_loss),
             }
-            wandb.log(log_dict)
+            if args.wandb:
+                wandb.log(log_dict)
             print('\n\n\nlog_dict:', log_dict, '\n\n')
             if args.dataset in ['enwik8', 'text8']:
                 log_str += ' | bpc {:9.5f}'.format(val_loss / math.log(2))
@@ -566,7 +596,7 @@ eval_start_time = time.time()
 # At any point you can hit Ctrl + C to break out of training early.
 try:
     for epoch in itertools.count(start=1):
-        train()
+        train(args)
         if train_step == args.max_step:
             logging('-' * 100)
             logging('End of training')

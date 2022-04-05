@@ -288,6 +288,22 @@ class H_Matrix_Masks_1D:
         
 
 # %%
+class FishPP_Head:
+    @classmethod
+    def get_dims(cls, heads, global_heads, head_dim):
+        # qkv_dim is normally [3 * heads * head_dim]
+        qk_dim = global_heads * head_dim
+        qkv_heads = heads + 2 * global_heads
+        qkv_dim = (heads + 2 * global_heads) * head_dim
+        v_dim = heads * head_dim
+        return {
+            'qkv_heads': qkv_heads,
+            'qkv_dim': qkv_dim,
+            'qk_dim': qk_dim,
+            'v_dim': v_dim,
+        }
+
+# %%
 def get_layer_indices(limit=None, offset=0, count=12):
     if limit is None or limit < 0:
         return list(range(count))

@@ -18,3 +18,7 @@ gmm/eigen/*.npy
 gmm/plots/test_ir/*
 swin/wandb/*
 swin/output/*
+
+**/.DS_Store
+transformer-xl/pytorch/wandb/*
+transformer-xl/pytorch/run_wt103_base_custom.sh

@@ -277,9 +277,7 @@ class RelPartialLearnableMultiHeadAttn_FishPP(nn.Module):
         self.scale = 1 / (d_head ** 0.5)
 
         self.pre_lnorm = pre_lnorm
-        
-        
-
+    
     def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
         
@@ -629,7 +627,6 @@ class MultiHeadAttn(nn.Module):
 
         return output
 
-
 # L2_2
 class MultiHeadAttn_FishPP(nn.Module):
     def __init__(self, n_head, d_model, d_head, dropout, dropatt=0, 
@@ -640,16 +637,25 @@ class MultiHeadAttn_FishPP(nn.Module):
                  non_linear=0,
                  non_linear_bias=1,
                  masks=None,
+                 token_count=160,
                  ):
-        super(MultiHeadAttn, self).__init__()
-
+        super(MultiHeadAttn_FishPP, self).__init__()
+        
+        assert masks is not None
+        assert d_model == d_head * n_head, '?? HEADS and DIM'
+        self.non_linear = non_linear
+        self.non_linear_bias = non_linear_bias
+        self.global_proj_type = global_proj_type
+        self.global_heads = global_heads
+        self.mask_levels = mask_levels
+        self.num_heads = n_head
+        self.masks = masks
+        self.token_count = token_count
+        
         self.n_head = n_head
         self.d_model = d_model
         self.d_head = d_head
         self.dropout = dropout
-
-        self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
-        self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
 
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
@@ -660,28 +666,65 @@ class MultiHeadAttn_FishPP(nn.Module):
         self.scale = 1 / (d_head ** 0.5)
 
         self.pre_lnorm = pre_lnorm
-
+        
+        
+        
+        _dims = FishPP_Head.get_dims(
+            heads=n_head,
+            global_heads=global_heads,
+            head_dim=d_head,
+        )
+        # print('<ATTN> [FISHPP] dims:', _dims)
+        self.qk_dim = _dims['qk_dim']
+        self.v_dim = _dims['v_dim']
+        print(f'<ATTN> [FISHPP] head[{global_heads}->{n_head}] mask_levels[{mask_levels}] global_proj_type[{global_proj_type}]')
+        
+        # self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
+        # self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
+        
+        self.q_net = nn.Linear(d_model, _dims['qk_dim'], bias=False)
+        self.k_net = nn.Linear(d_model, _dims['qk_dim'], bias=False)
+        self.v_net = nn.Linear(d_model, _dims['v_dim'], bias=False)
+        
+        self.head_ratio = int(self.n_head // self.global_heads)
+        if self.global_proj_type == 'mix':
+            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.n_head * self.global_heads, device='cuda'))
+        elif self.global_proj_type == 'full':
+            assert self.n_head % self.global_heads == 0
+            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.n_head, device='cuda'))
+        else:
+            assert self.n_head % self.global_heads == 0
+            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.head_ratio, device='cuda'))
+        
+    
     def forward(self, h, attn_mask=None, mems=None):
         ##### multihead attention
         # [hlen x bsz x n_head x d_head]
 
+        assert mems is None, f'debug to check for mems: {mems.size()}'
         if mems is not None:
             c = torch.cat([mems, h], 0)
         else:
             c = h
-
+        
         if self.pre_lnorm:
             ##### layer normalization
             c = self.layer_norm(c)
-
+        
+        Nq = h.size(0)
+        Nk = c.size(0)
+        B = h.size(1)
+        assert B == c.size(1)
+        
         head_q = self.q_net(h)
-        head_k, head_v = torch.chunk(self.kv_net(c), 2, -1)
+        head_k = self.k_net(c)
+        head_v = self.v_net(c)
 
-        head_q = head_q.view(h.size(0), h.size(1), self.n_head, self.d_head)
-        head_k = head_k.view(c.size(0), c.size(1), self.n_head, self.d_head)
-        head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        head_q = head_q.view(Nq, B, self.global_heads, self.d_head)
+        head_k = head_k.view(Nk, B, self.global_heads, self.d_head)
+        head_v = head_v.view(Nk, B, self.n_head, self.d_head)
 
-        # [qlen x klen x bsz x n_head]
+        # [qlen x klen x bsz x n_head] / [Nq, Nk, B, GH]
         attn_score = torch.einsum('ibnd,jbnd->ijbn', (head_q, head_k))
         attn_score.mul_(self.scale)
         if attn_mask is not None and attn_mask.any().item():
@@ -689,7 +732,63 @@ class MultiHeadAttn_FishPP(nn.Module):
                 attn_score.masked_fill_(attn_mask[None,:,:,None], -float('inf'))
             elif attn_mask.dim() == 3:
                 attn_score.masked_fill_(attn_mask[:,:,:,None], -float('inf'))
-
+        
+        # FISHPP: attn_score [Nq, Nk, B, H]
+        attn_score
+        
+        
+        # FISHPP: attn_score [Nq, Nk, B, GH] -> attn [B, GH, Nq, Nk]
+        Nq, Nk, B, _ = attn_score.shape
+        N = Nq
+        # print('attn_score', attn_score.size()) # 
+        # print(Nq, Nk, B, _, mems)
+        # assert Nq == Nk == self.token_count, f'mismatch: Nq[{Nq}] Nk[{Nk}] token_count[{self.token_count}]'
+        assert Nq == Nk, f'mismatch: Nq[{Nq}] Nk[{Nk}]'
+        # [Nq, Nk, B, GH] -> [B, GH, Nq, Nk]
+        attn = attn_score.permute(2, 3, 0, 1).contiguous()
+        
+        # masks [1, 1, N, N, Level] -> [1, 1, N, N, HR / H / GH*H]
+        mask_weights = self.masks @ self.mask_proj
+        
+        if self.global_proj_type == 'mix':
+            mask_weights = mask_weights.reshape([1, self.token_count, self.token_count, self.global_heads, self.n_head])
+            mask_weights = mask_weights.permute(0, 3, 1, 2, 4)
+            # masks_weights [1, GH, N, N, H]
+        elif self.global_proj_type == 'full':
+            mask_weights = mask_weights.reshape([1, self.token_count, self.token_count, self.global_heads, self.head_ratio])
+            mask_weights = mask_weights.permute(0, 3, 1, 2, 4)
+            # masks_weights [1, GH, N, N, HR]
+        
+        mask_weights = mask_weights[:, :, :Nq, :Nk]
+        # attn [B, GH, N, N] x masks [1, 1/GH, N, N, HR/H] -> [B, GH, N, N, HR/H]
+        attn = attn[..., None] * mask_weights
+        
+        # TODO: implement non_linear
+        if self.global_proj_type == 'mix':
+            # [B, GH, N, N, H] -> [B, N, N, H]
+            attn = torch.sum(attn, dim=-4, keepdim=False)
+            # [B, N, N, H] -> [B, H, N, N]
+            attn = attn.permute(0, 3, 1, 2).contiguous()
+        else:
+            # [B, GH, N, N, HR] -> [B, GH, HR, N, N] -> [B, H, N, N]
+            attn = attn.permute(0, 1, 4, 2, 3).reshape(B, self.n_head, N, N).contiguous()
+        
+        # print('r', r.size())
+        # print('w_heads', w_heads.size()) # [N, B, qkv_dim]
+        # print('w_head_q', w_head_q.size()) # [N, B, GH, D]
+        # print('w_head_k', w_head_k.size()) # [N, B, GH, D]
+        # print('w_head_v', w_head_v.size()) # [N, B, H, D]
+        # print('r_head_k', r_head_k.size()) # [N, GH, D]
+        # print('mask_weights', mask_weights.size()) # 
+        # print('attn_score', attn_score.size()) # 
+        # print('attn', attn.size()) # 
+        # assert 0
+        
+        # attn: [B, H, N, N] -> attn_score: [N, N, B, H]
+        attn_score = attn.permute(2, 3, 0, 1).contiguous()
+        # continue with local attn_score [Nq, Nk, B, H]
+        
+        
         # [qlen x klen x bsz x n_head]
         attn_prob = F.softmax(attn_score, dim=1)
         attn_prob = self.dropatt(attn_prob)
@@ -815,6 +914,7 @@ class MemTransformerLM(nn.Module):
             non_linear=non_linear,
             non_linear_bias=non_linear_bias,
             masks=self.masks,
+            token_count=tgt_len,
         )
         
         self.layers = nn.ModuleList()
@@ -967,13 +1067,11 @@ class MemTransformerLM(nn.Module):
                 mask_shift_len = qlen - mask_len
             else:
                 mask_shift_len = qlen
-            # print('2')
             dec_attn_mask = (torch.triu(all_ones, 1+mlen)
                     + torch.tril(all_ones, -mask_shift_len)).byte()[:, :, None] # -1
             # dec_attn_mask = (torch.triu(all_ones, 1+mlen)
             #         + torch.tril(all_ones, -mask_shift_len)).bool()[:, :, None] # -1
         else:
-            # print('3')
             dec_attn_mask = torch.triu(
                 word_emb.new_ones(qlen, klen), diagonal=1+mlen).byte()[:,:,None]
             # dec_attn_mask = torch.triu(
@@ -1025,7 +1123,10 @@ class MemTransformerLM(nn.Module):
             for i, layer in enumerate(self.layers):
                 mems_i = None if mems is None else mems[i]
                 if mems_i is not None and i == 0:
+                    # print(mems_i.size())
+                    # print(pos_emb.size())
                     mems_i += pos_emb[:mlen]
+                    # assert 0
                 core_out = layer(core_out, dec_attn_mask=dec_attn_mask,
                                  mems=mems_i)
                 hids.append(core_out)
