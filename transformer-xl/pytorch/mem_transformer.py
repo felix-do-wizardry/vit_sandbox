@@ -13,7 +13,7 @@ from proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from log_uniform_sampler import LogUniformSampler, sample_logits
 
 import os, json
-from h_matrix import H_Matrix_1D, H_Matrix_Masks_1D, get_layer_indices
+from h_matrix import H_Matrix_1D, H_Matrix_Masks_1D, get_layer_indices, FishPP_Head
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, demb):
@@ -72,8 +72,6 @@ class PositionwiseFF(nn.Module):
 
 # L2
 class RelPartialLearnableMultiHeadAttn(nn.Module):
-
-
     def __init__(self, n_head, d_model, d_head, dropout, dropatt=0,
                  tgt_len=None, ext_len=None, mem_len=None, pre_lnorm=False,
                  ):
@@ -102,6 +100,7 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
 
         if mems is not None:
+            # print(mems.size())
             cat = torch.cat([mems, w], 0)
             if self.pre_lnorm:
                 w_heads = self.qkv_net(self.layer_norm(cat))
@@ -149,6 +148,247 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
                 attn_score = attn_score.float().masked_fill(
                     attn_mask[:,:,:,None], -float('inf')).type_as(attn_score)
 
+        # [qlen x klen x bsz x n_head]
+        attn_prob = F.softmax(attn_score, dim=1)
+        print(attn_prob.size())
+        attn_prob = self.dropatt(attn_prob)
+
+        #### compute attention vector
+        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, w_head_v))
+
+        # [qlen x bsz x n_head x d_head]
+        attn_vec = attn_vec.contiguous().view(
+            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
+
+        ##### linear projection
+        attn_out = self.o_net(attn_vec)
+        attn_out = self.drop(attn_out)
+
+        if self.pre_lnorm:
+            ##### residual connection
+            output = w + attn_out
+        else:
+            ##### residual connection + layer normalization
+            output = self.layer_norm(w + attn_out)
+
+        return output
+
+    def _parallelogram_mask(self, h, w, left=False):
+        # print('1')
+        mask = torch.ones((h, w)).byte()
+        # mask = torch.ones((h, w)).bool()
+        m = min(h, w)
+        mask[:m,:m] = torch.triu(mask[:m,:m])
+        mask[-m:,-m:] = torch.tril(mask[-m:,-m:])
+
+        if left:
+            return mask
+        else:
+            return mask.flip(0)
+
+    def _shift(self, x, qlen, klen, mask, left=False):
+        if qlen > 1:
+            zero_pad = torch.zeros((x.size(0), qlen-1, x.size(2), x.size(3)),
+                                    device=x.device, dtype=x.dtype)
+        else:
+            zero_pad = torch.zeros(0, device=x.device, dtype=x.dtype)
+
+        if left:
+            mask = mask.flip(1)
+            x_padded = torch.cat([zero_pad, x], dim=1).expand(qlen, -1, -1, -1)
+        else:
+            x_padded = torch.cat([x, zero_pad], dim=1).expand(qlen, -1, -1, -1)
+
+        x = x_padded.masked_select(mask[:,:,None,None]) \
+                    .view(qlen, klen, x.size(2), x.size(3))
+
+        return x
+
+    def _rel_shift(self, x, zero_triu=False):
+        zero_pad = torch.zeros((x.size(0), 1, *x.size()[2:]),
+                               device=x.device, dtype=x.dtype)
+        x_padded = torch.cat([zero_pad, x], dim=1)
+
+        x_padded = x_padded.view(x.size(1) + 1, x.size(0), *x.size()[2:])
+
+        x = x_padded[1:].view_as(x)
+
+        if zero_triu:
+            ones = torch.ones((x.size(0), x.size(1)))
+            x = x * torch.tril(ones, x.size(1) - x.size(0))[:,:,None,None]
+
+        return x
+
+
+class RelPartialLearnableMultiHeadAttn_FishPP(nn.Module):
+    def __init__(self, n_head, d_model, d_head, dropout, dropatt=0,
+                 tgt_len=None, ext_len=None, mem_len=None, pre_lnorm=False,
+                 
+                 mask_levels=3,
+                 global_heads=2,
+                 global_proj_type='full',
+                 non_linear=0,
+                 non_linear_bias=1,
+                 masks=None,
+                 ):
+        super(RelPartialLearnableMultiHeadAttn_FishPP, self).__init__()
+        
+        assert d_model == d_head * n_head, '?? HEADS and DIM'
+        self.n_head = n_head
+        self.global_heads = global_heads
+        self.d_model = d_model
+        self.d_head = d_head
+        self.dropout = dropout
+        
+        _dims = FishPP_Head.get_dims(
+            heads=self.n_head,
+            global_heads=self.global_heads,
+            head_dim=d_head,
+        )
+        print('<ATTN> [FISHPP] dims:', _dims)
+        self.qk_dim = _dims['qk_dim']
+        self.v_dim = _dims['v_dim']
+        
+        # self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
+        # self.r_net = nn.Linear(self.d_model, self.n_head * self.d_head, bias=False)
+        self.qkv_net = nn.Linear(d_model, _dims['qkv_dim'], bias=False)
+        self.r_net = nn.Linear(self.d_model, _dims['qk_dim'], bias=False)
+
+        self.masks = masks
+        self.mask_levels = mask_levels
+        self.global_proj_type = global_proj_type
+        self.head_ratio = int(self.n_head // self.global_heads)
+        if self.global_proj_type == 'mix':
+            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.n_head * self.global_heads, device='cuda'))
+        elif self.global_proj_type == 'full':
+            assert self.n_head % self.global_heads == 0
+            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.n_head, device='cuda'))
+        else:
+            assert self.n_head % self.global_heads == 0
+            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.head_ratio, device='cuda'))
+
+
+        self.drop = nn.Dropout(dropout)
+        self.dropatt = nn.Dropout(dropatt)
+        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+
+        self.layer_norm = nn.LayerNorm(d_model)
+
+        self.scale = 1 / (d_head ** 0.5)
+
+        self.pre_lnorm = pre_lnorm
+        
+        
+
+    def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
+        qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
+        
+        # mems
+        if mems is not None:
+            cat = torch.cat([mems, w], 0)
+        else:
+            cat = w
+        
+        if self.pre_lnorm:
+            cat = self.layer_norm(cat)
+        
+        w_heads = self.qkv_net(cat)
+        # r [N, 1, H*D]
+        r_head_k = self.r_net(r)
+        
+        # w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
+        w_head_q = w_heads[..., : self.qk_dim]
+        w_head_k = w_heads[..., self.qk_dim : self.qk_dim * 2]
+        w_head_v = w_heads[..., self.qk_dim * 2 : ]
+        
+        if mems is not None:
+            w_head_q = w_head_q[-qlen:]
+
+        klen = w_head_k.size(0)
+
+        w_head_q = w_head_q.view(qlen, bsz, self.global_heads, self.d_head)           # qlen x bsz x n_head x d_head
+        w_head_k = w_head_k.view(klen, bsz, self.global_heads, self.d_head)           # qlen x bsz x n_head x d_head
+        w_head_v = w_head_v.view(klen, bsz, self.n_head, self.d_head)               # qlen x bsz x n_head x d_head
+
+        r_head_k = r_head_k.view(rlen, self.global_heads, self.d_head)                # qlen x n_head x d_head
+
+        #### compute attention score
+        # r_w_bias [GH, D] (given from L0 class)
+        rw_head_q = w_head_q + r_w_bias                                         # qlen x bsz x n_head x d_head
+        # [Nq, B, GH, D] x [Nk, B, GH, D] -> [Nq, Nk, B, GH]
+        AC = torch.einsum('ibnd,jbnd->ijbn', (rw_head_q, w_head_k))             # qlen x klen x bsz x n_head
+        
+        # r_r_bias [GH, D] (given from L0 class)
+        rr_head_q = w_head_q + r_r_bias
+        # [Nq, B, GH, D] x [Nk, GH, D] -> [Nq, Nk, B, GH]
+        BD = torch.einsum('ibnd,jnd->ijbn', (rr_head_q, r_head_k))              # qlen x klen x bsz x n_head
+        BD = self._rel_shift(BD)
+
+        # [qlen x klen x bsz x n_head]
+        attn_score = AC + BD
+        attn_score.mul_(self.scale)
+
+        #### compute attention probability
+        if attn_mask is not None and attn_mask.any().item():
+            if attn_mask.dim() == 2:
+                attn_score = attn_score.float().masked_fill(
+                    attn_mask[None,:,:,None], -float('inf')).type_as(attn_score)
+            elif attn_mask.dim() == 3:
+                attn_score = attn_score.float().masked_fill(
+                    attn_mask[:,:,:,None], -float('inf')).type_as(attn_score)
+        
+        
+        # FISHPP: attn_score [Nq, Nk, B, GH] -> attn [B, GH, Nq, Nk]
+        Nq, Nk, B, _ = attn_score.shape
+        # print('attn_score', attn_score.size()) # 
+        # print(Nq, Nk, B, _, mems)
+        # assert Nq == Nk, f'{Nq} != {Nk}'
+        # assert 0
+        # N = Nq
+        attn = attn_score.permute(2, 3, 0, 1).contiguous()
+        
+        # masks [1, 1, N, N, Level] -> [1, 1, N, N, HR / H / GH*H]
+        mask_weights = self.masks @ self.mask_proj
+        
+        if self.global_proj_type == 'mix':
+            mask_weights = mask_weights.reshape([1, N, N, self.global_heads, self.n_head])
+            mask_weights = mask_weights.permute(0, 3, 1, 2, 4)
+            # masks_weights [1, GH, N, N, H]
+        elif self.global_proj_type == 'full':
+            mask_weights = mask_weights.reshape([1, N, N, self.global_heads, self.head_ratio])
+            mask_weights = mask_weights.permute(0, 3, 1, 2, 4)
+            # masks_weights [1, GH, N, N, HR]
+        
+        # attn [B, GH, N, N] x masks [1, 1/GH, N, N, HR/H] -> [B, GH, N, N, HR/H]
+        attn = attn[..., None] * mask_weights
+        
+        # TODO: implement non_linear
+        if self.global_proj_type == 'mix':
+            # [B, GH, N, N, H] -> [B, N, N, H]
+            attn = torch.sum(attn, dim=-4, keepdim=False)
+            # [B, N, N, H] -> [B, H, N, N]
+            attn = attn.permute(0, 3, 1, 2).contiguous()
+        else:
+            # [B, GH, N, N, HR] -> [B, GH, HR, N, N] -> [B, H, N, N]
+            attn = attn.permute(0, 1, 4, 2, 3).reshape(B, self.n_head, N, N).contiguous()
+        
+        # print('r', r.size())
+        # print('w_heads', w_heads.size()) # [N, B, qkv_dim]
+        # print('w_head_q', w_head_q.size()) # [N, B, GH, D]
+        # print('w_head_k', w_head_k.size()) # [N, B, GH, D]
+        # print('w_head_v', w_head_v.size()) # [N, B, H, D]
+        # print('r_head_k', r_head_k.size()) # [N, GH, D]
+        # print('mask_weights', mask_weights.size()) # 
+        # print('attn_score', attn_score.size()) # 
+        # print('attn', attn.size()) # 
+        # assert 0
+        
+        # attn: [B, H, N, N] -> attn_score: [N, N, B, H]
+        attn_score = attn.permute(2, 3, 0, 1).contiguous()
+        # continue with local head attn
+        
+        
+        
         # [qlen x klen x bsz x n_head]
         attn_prob = F.softmax(attn_score, dim=1)
         attn_prob = self.dropatt(attn_prob)
@@ -220,20 +460,26 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         return x
 
 
-
 # L1
 class RelPartialLearnableDecoderLayer(nn.Module):
     def __init__(self, n_head, d_model, d_head, d_inner, dropout,
+                pre_lnorm,
                 fishpp=0,
-                fish_kwargs={},
+                # fish_kwargs={},
                 **kwargs):
         super(RelPartialLearnableDecoderLayer, self).__init__()
 
         # TODO: split flow and implement fishpp class
-        self.dec_attn = RelPartialLearnableMultiHeadAttn(n_head, d_model,
-                            d_head, dropout, **kwargs)
+        if fishpp:
+            self.dec_attn = RelPartialLearnableMultiHeadAttn_FishPP(
+                n_head, d_model, d_head, dropout,
+                **kwargs,
+            )
+        else:
+            self.dec_attn = RelPartialLearnableMultiHeadAttn(n_head, d_model,
+                                d_head, dropout, **kwargs)
         self.pos_ff = PositionwiseFF(d_model, d_inner, dropout, 
-                                     pre_lnorm=kwargs.get('pre_lnorm'))
+                                     pre_lnorm=pre_lnorm)
 
     def forward(self, dec_inp, r, r_w_bias, r_r_bias, dec_attn_mask=None, mems=None):
 
@@ -307,6 +553,104 @@ class AdaptiveEmbedding(nn.Module):
 
         return embed
 
+
+# L2_2
+class MultiHeadAttn(nn.Module):
+    def __init__(self, n_head, d_model, d_head, dropout, dropatt=0, 
+                 pre_lnorm=False):
+        super(MultiHeadAttn, self).__init__()
+
+        self.n_head = n_head
+        self.d_model = d_model
+        self.d_head = d_head
+        self.dropout = dropout
+
+        self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
+        self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
+
+        self.drop = nn.Dropout(dropout)
+        self.dropatt = nn.Dropout(dropatt)
+        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+
+        self.layer_norm = nn.LayerNorm(d_model)
+
+        self.scale = 1 / (d_head ** 0.5)
+
+        self.pre_lnorm = pre_lnorm
+
+    def forward(self, h, attn_mask=None, mems=None):
+        ##### multihead attention
+        # [hlen x bsz x n_head x d_head]
+
+        if mems is not None:
+            c = torch.cat([mems, h], 0)
+        else:
+            c = h
+
+        if self.pre_lnorm:
+            ##### layer normalization
+            c = self.layer_norm(c)
+
+        head_q = self.q_net(h)
+        head_k, head_v = torch.chunk(self.kv_net(c), 2, -1)
+
+        head_q = head_q.view(h.size(0), h.size(1), self.n_head, self.d_head)
+        head_k = head_k.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
+
+        # [qlen x klen x bsz x n_head]
+        attn_score = torch.einsum('ibnd,jbnd->ijbn', (head_q, head_k))
+        attn_score.mul_(self.scale)
+        if attn_mask is not None and attn_mask.any().item():
+            if attn_mask.dim() == 2:
+                attn_score.masked_fill_(attn_mask[None,:,:,None], -float('inf'))
+            elif attn_mask.dim() == 3:
+                attn_score.masked_fill_(attn_mask[:,:,:,None], -float('inf'))
+
+        # [qlen x klen x bsz x n_head]
+        attn_prob = F.softmax(attn_score, dim=1)
+        attn_prob = self.dropatt(attn_prob)
+
+        # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head] -> [qlen x bsz x n_head x d_head]
+        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, head_v))
+        attn_vec = attn_vec.contiguous().view(
+            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
+
+        ##### linear projection
+        attn_out = self.o_net(attn_vec)
+        attn_out = self.drop(attn_out)
+
+        if self.pre_lnorm:
+            ##### residual connection
+            output = h + attn_out
+        else:
+            ##### residual connection + layer normalization
+            output = self.layer_norm(h + attn_out)
+
+        return output
+
+
+# L1_2
+class DecoderLayer(nn.Module):
+    def __init__(self, n_head, d_model, d_head, d_inner, dropout, fishpp=0, **kwargs):
+        super(DecoderLayer, self).__init__()
+        
+        if fishpp:
+            pass
+            # self.dec_attn = MultiHeadAttn_FishPP(n_head, d_model, d_head, dropout, **kwargs)
+        else:
+            self.dec_attn = MultiHeadAttn(n_head, d_model, d_head, dropout, **kwargs)
+        self.pos_ff = PositionwiseFF(d_model, d_inner, dropout, 
+                                     pre_lnorm=kwargs.get('pre_lnorm'))
+
+    def forward(self, dec_inp, dec_attn_mask=None, mems=None):
+
+        output = self.dec_attn(dec_inp, attn_mask=dec_attn_mask,
+                               mems=mems)
+        output = self.pos_ff(output)
+
+        return output
+
 # L0
 class MemTransformerLM(nn.Module):
     def __init__(self, n_token, n_layer, n_head, d_model, d_head, d_inner,
@@ -318,13 +662,13 @@ class MemTransformerLM(nn.Module):
                  sample_softmax=-1,
                  
                  fishpp=0,
-                 mask_type='dist',
-                 mask_levels=3,
+                 mask_type='h1d',
+                 mask_levels=4,
                  non_linear=0,
                  non_linear_bias=1,
                  
-                 global_heads=1,
-                 global_proj_type='full',
+                 global_heads=3,
+                 global_proj_type='mix',
                  
                  layer_limit=None,
                  layer_offset=0,
@@ -354,52 +698,65 @@ class MemTransformerLM(nn.Module):
         self.max_klen = tgt_len + ext_len + mem_len
         
         if fishpp:
+            self.global_heads = global_heads
             fish_layer_indices = get_layer_indices(
                 limit=layer_limit,
                 offset=layer_offset,
                 count=n_layer,
             )
-            self.masks, _ = H_Matrix_Masks_1D.get_masks(
+            print('layers', fish_layer_indices)
+            _masks, _ = H_Matrix_Masks_1D.get_masks(
                 mask_type=mask_type,
                 n=tgt_len,
                 mask_levels=mask_levels,
             )
+            self.masks = torch.tensor(
+                _masks,
+                dtype=torch.float32, device='cuda', requires_grad=False,
+            )
             assert _ == mask_levels, f'mask_levels is modified [{mask_levels}->{_}] in H_Matrix_Masks_1D.get_masks | not supposed to happen'
         else:
+            self.global_heads = n_head
             fish_layer_indices = []
             self.masks = None
 
-        assert attn_type == 0, f'attn_type[{attn_type}] | only the default value [0] is allowed for fish++'
+        assert attn_type == 2, f'attn_type[{attn_type}] | only the default value [2] is allowed for fish++'
         self.attn_type = attn_type
         
         # TODO: implement non_linear
+        assert not non_linear
+        L1_fish_kwargs = dict(
+            fishpp=1,
+            mask_levels=mask_levels,
+            global_heads=global_heads,
+            global_proj_type=global_proj_type,
+            non_linear=non_linear,
+            non_linear_bias=non_linear_bias,
+            masks=self.masks,
+        )
+        
         self.layers = nn.ModuleList()
         if attn_type == 0: # the default attention
-            for i in range(n_layer):
-                if fishpp and i in fish_layer_indices:
-                    # TODO: implement L1 class fish kwargs passing
-                    self.layers.append(
-                        RelPartialLearnableDecoderLayer(
-                            n_head, d_model, d_head, d_inner, dropout,
-                            tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,
-                            dropatt=dropatt, pre_lnorm=pre_lnorm,
-                            
-                            fishpp=1,
-                            # mask_levels=mask_levels,
-                            # global_heads=global_heads,
-                            # global_proj_type=global_proj_type,
-                            # non_linear=non_linear,
-                            # non_linear_bias=non_linear_bias,
-                        )
-                    )
-                else:
-                    self.layers.append(
-                        RelPartialLearnableDecoderLayer(
-                            n_head, d_model, d_head, d_inner, dropout,
-                            tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,
-                            dropatt=dropatt, pre_lnorm=pre_lnorm,
-                        )
-                    )
+            assert 0
+            # for i in range(n_layer):
+            #     if fishpp and i in fish_layer_indices:
+            #         # TODO: implement L1 class fish kwargs passing
+            #         self.layers.append(
+            #             RelPartialLearnableDecoderLayer(
+            #                 n_head, d_model, d_head, d_inner, dropout,
+            #                 tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,
+            #                 dropatt=dropatt, pre_lnorm=pre_lnorm,
+            #                 **L1_fish_kwargs,
+            #             )
+            #         )
+            #     else:
+            #         self.layers.append(
+            #             RelPartialLearnableDecoderLayer(
+            #                 n_head, d_model, d_head, d_inner, dropout,
+            #                 tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,
+            #                 dropatt=dropatt, pre_lnorm=pre_lnorm,
+            #             )
+            #         )
         elif attn_type == 1: # learnable embeddings
             assert 0
             # for i in range(n_layer):
@@ -410,13 +767,14 @@ class MemTransformerLM(nn.Module):
             #             dropatt=dropatt, pre_lnorm=pre_lnorm)
             #     )
         elif attn_type in [2, 3]: # absolute embeddings
-            assert 0
-            # for i in range(n_layer):
-            #     self.layers.append(
-            #         DecoderLayer(
-            #             n_head, d_model, d_head, d_inner, dropout,
-            #             dropatt=dropatt, pre_lnorm=pre_lnorm)
-            #     )
+            for i in range(n_layer):
+                self.layers.append(
+                    DecoderLayer(
+                        n_head, d_model, d_head, d_inner, dropout,
+                        dropatt=dropatt, pre_lnorm=pre_lnorm,
+                        **(L1_fish_kwargs if fishpp and i in fish_layer_indices else {}),
+                    )
+                )
 
         self.sample_softmax = sample_softmax
         # use sampled softmax
@@ -453,10 +811,12 @@ class MemTransformerLM(nn.Module):
 
     def _create_params(self):
         if self.attn_type == 0: # default attention
+            assert 0
             self.pos_emb = PositionalEmbedding(self.d_model)
-            self.r_w_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
-            self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
+            self.r_w_bias = nn.Parameter(torch.Tensor(self.global_heads, self.d_head))
+            self.r_r_bias = nn.Parameter(torch.Tensor(self.global_heads, self.d_head))
         elif self.attn_type == 1: # learnable
+            assert 0
             self.r_emb = nn.Parameter(torch.Tensor(
                     self.n_layer, self.max_klen, self.n_head, self.d_head))
             self.r_w_bias = nn.Parameter(torch.Tensor(
@@ -464,8 +824,10 @@ class MemTransformerLM(nn.Module):
             self.r_bias = nn.Parameter(torch.Tensor(
                     self.n_layer, self.max_klen, self.n_head))
         elif self.attn_type == 2: # absolute standard
+            # assert 0
             self.pos_emb = PositionalEmbedding(self.d_model)
         elif self.attn_type == 3: # absolute deeper SA
+            assert 0
             self.r_emb = nn.Parameter(torch.Tensor(
                     self.n_layer, self.max_klen, self.n_head, self.d_head))
 
@@ -512,21 +874,6 @@ class MemTransformerLM(nn.Module):
     def _forward(self, dec_inp, mems=None):
         qlen, bsz = dec_inp.size()
         
-        # _qlen = int(qlen)
-        # if _qlen not in self.qlen_logs:
-        #     self.qlen_logs[_qlen] = 0
-        # self.qlen_logs[_qlen] += 1
-        # _fp = 'temp_qlen.json'
-        # # if not os.path.isfile(_fp):
-        # #     with open(_fp, 'w') as f:
-        # #         f.writelines([])
-        # with open(_fp, 'w') as f:
-        #     json.dump(self.qlen_logs, f)
-        #     # f.writelines([
-        #     #     str(int(qlen)),
-        #     #     '\n',
-        #     # ])
-
         word_emb = self.word_emb(dec_inp)
 
         mlen = mems[0].size(0) if mems is not None else 0
@@ -552,6 +899,7 @@ class MemTransformerLM(nn.Module):
 
         hids = []
         if self.attn_type == 0: # default
+            assert 0
             pos_seq = torch.arange(klen-1, -1, -1.0, device=word_emb.device, 
                                    dtype=word_emb.dtype)
             if self.clamp_len > 0:
@@ -568,6 +916,7 @@ class MemTransformerLM(nn.Module):
                         self.r_r_bias, dec_attn_mask=dec_attn_mask, mems=mems_i)
                 hids.append(core_out)
         elif self.attn_type == 1: # learnable
+            assert 0
             core_out = self.drop(word_emb)
             hids.append(core_out)
             for i, layer in enumerate(self.layers):
@@ -599,6 +948,7 @@ class MemTransformerLM(nn.Module):
                                  mems=mems_i)
                 hids.append(core_out)
         elif self.attn_type == 3:
+            assert 0
             core_out = self.drop(word_emb)
 
             hids.append(core_out)
