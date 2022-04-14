@@ -11,7 +11,7 @@ import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 import numpy as np
-from models.h_matrix import H_Matrix, H_Matrix_Masks
+from models.h_matrix import H_Matrix, H_Matrix_Masks, MASK_TYPES
 
 
 class Mlp(nn.Module):
@@ -197,7 +197,7 @@ class WindowAttention_FishPP(nn.Module):
         assert mask_levels >= 1
         
         assert global_proj_type in ['full', 'mix'], 'full or mix only'
-        assert mask_type in ['dist']
+        # assert mask_type in ['dist']
         assert window_size[0] == window_size[1]
         assert num_heads % global_heads == 0
         
@@ -912,8 +912,7 @@ class SwinTransformer_FishPP(nn.Module):
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         
-        mask_types = ['dist', 'distq']
-        assert mask_type in mask_types, f'[SWIN] only dist-based mask_type allowed, one of {mask_types}'
+        assert mask_type in MASK_TYPES, f'[SWIN] only dist-based mask_type allowed, one of {MASK_TYPES}'
         assert stage_limit <= len(depths)
         self.stage_limit = stage_limit
         if self.stage_limit <= 0:

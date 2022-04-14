@@ -1,0 +1,19 @@
+MODEL:
+  TYPE: swin
+  NAME: swinT_cross3_gr3m
+  DROP_PATH_RATE: 0.2
+  SWIN:
+    EMBED_DIM: 96
+    DEPTHS: [ 2, 2, 6, 2 ]
+    NUM_HEADS: [ 3, 6, 12, 24 ]
+    WINDOW_SIZE: 7
+  
+  FISHPP:
+    FISHPP: True
+    FISH_GLOBAL_HEADS_RATIO: 3
+    FISH_MASK_LEVELS: 3
+    FISH_MASK_TYPE: cross
+    FISH_NON_LINEAR: 0
+    FISH_NON_LINEAR_BIAS: 1
+    FISH_GLOBAL_PROJ_TYPE: mix
+    FISH_STAGE_LIMIT: -1
