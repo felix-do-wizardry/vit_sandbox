@@ -22,3 +22,14 @@ swin/output/*
 **/.DS_Store
 transformer-xl/pytorch/wandb/*
 transformer-xl/pytorch/run_wt103_base_custom.sh
+utils/wandb/*
+
+xcit/*.swp
+xcit/**/__pycache__/**
+xcit/*.vscode/
+xcit/*.pdf
+xcit/*.yaml
+xcit/events.out.*
+xcit/.ipynb_checkpoints/*
+xcit/detection/data
+xcit/semantic_segmentation/data
