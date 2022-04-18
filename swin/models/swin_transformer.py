@@ -259,11 +259,15 @@ class WindowAttention_FishPP(nn.Module):
         # - full: [G, HR]
         # - mix : [G, HR]
         if self.global_proj_type == 'mix':
-            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.num_heads * self.global_heads, device='cuda'))
+            mask_proj_units = [self.mask_levels, self.num_heads * self.global_heads]
+            # self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.num_heads * self.global_heads, device='cuda'))
         elif self.global_proj_type == 'full':
-            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.num_heads, device='cuda'))
+            mask_proj_units = [self.mask_levels, self.num_heads]
+            # self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.num_heads, device='cuda'))
         else:
-            self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.head_ratio, device='cuda'))
+            mask_proj_units = [self.mask_levels, self.head_ratio]
+            # self.mask_proj = nn.Parameter(torch.ones(self.mask_levels, self.head_ratio, device='cuda'))
+        self.mask_proj = nn.Parameter(torch.ones(*mask_proj_units, device='cuda'))
         
         
         self.is_non_linear = non_linear
@@ -299,7 +303,8 @@ class WindowAttention_FishPP(nn.Module):
             f'global[{global_proj_type}]',
             f'mask[{mask_type}{mask_levels}]',
             f'heads[{global_heads}->{num_heads}]',
-            f'qkv[{dim}->{total_dim}]',
+            # f'qkv[{dim}->{total_dim}]',
+            f'pi[{mask_proj_units[0]}->{mask_proj_units[1]}]',
         )
 
     def forward(self, x, mask=None):

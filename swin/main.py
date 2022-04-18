@@ -70,7 +70,6 @@ def parse_option():
     # distributed training
     parser.add_argument("--local_rank", type=int, required=True, help='local rank for DistributedDataParallel')
     
-    # TODO: add wandb
     parser.add_argument('--wandb', default=1, type=int, help='wandb')
     
     args, unparsed = parser.parse_known_args()
