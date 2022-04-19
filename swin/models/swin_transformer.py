@@ -13,6 +13,8 @@ from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import numpy as np
 from models.h_matrix import H_Matrix, H_Matrix_Masks, MASK_TYPES
 
+# WINDOW_ATTN_LAYER_INDEX = 0
+
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -112,6 +114,10 @@ class WindowAttention(nn.Module):
 
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
+        print(
+            f'[SWIN] <WindowAttention> [BASE]',
+            f'heads[{num_heads}]',
+        )
 
     def forward(self, x, mask=None):
         """
@@ -187,6 +193,7 @@ class WindowAttention_FishPP(nn.Module):
                 non_linear_bias=1,
                 global_proj_type='full',
                 metrics_test=False,
+                # _layer_index=None,
                 # **kwargs,
                 ):
         super().__init__()
@@ -224,7 +231,7 @@ class WindowAttention_FishPP(nn.Module):
         
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
-            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), self.global_heads))  # 2*Wh-1 * 2*Ww-1, nH
 
         # get pair-wise relative position index for each token inside the window
         coords_h = torch.arange(self.window_size[0])
@@ -298,6 +305,14 @@ class WindowAttention_FishPP(nn.Module):
         #         # masks_weights [1, 1, N, N, HR]
         #     self._mask_weights = mask_weights
         
+        # self.DEBUG_STEPS = 12
+        # self.DEBUG_STEPS_JUMP = 1
+        # # self.DEBUG_STEPS_COUNT = 10
+        # self.mask_weights_np = None
+        # global WINDOW_ATTN_LAYER_INDEX
+        # self._layer_index = int(WINDOW_ATTN_LAYER_INDEX)
+        # WINDOW_ATTN_LAYER_INDEX += 1
+        
         print(
             f'[SWIN] <WindowAttention> [FISHPP]',
             f'global[{global_proj_type}]',
@@ -306,7 +321,7 @@ class WindowAttention_FishPP(nn.Module):
             # f'qkv[{dim}->{total_dim}]',
             f'pi[{mask_proj_units[0]}->{mask_proj_units[1]}]',
         )
-
+    
     def forward(self, x, mask=None):
         """
         Args:
@@ -332,12 +347,32 @@ class WindowAttention_FishPP(nn.Module):
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+        # print('attn', attn.shape)
+        # print('relative_position_bias', relative_position_bias.shape)
         attn = attn + relative_position_bias.unsqueeze(0)
 
         # FishPP:
         # masks [1, 1, N, N, Level] -> [1, 1, N, N, HR / H / GH*H]
         # mask_base [1, 1, N, N, 1]
         mask_weights = self.masks @ self.mask_proj
+        
+        # print(f'[DEBUG] <WindowAttention_FishPP> steps remaining: {self.DEBUG_STEPS}')
+        # if self.DEBUG_STEPS >= 0:
+        #     # [1, N, N, Hx]
+        #     mw = mask_weights.detach().cpu().numpy()[0]
+        #     if self.mask_weights_np is None:
+        #         self.mask_weights_np = mw
+        #     else:
+        #         self.mask_weights_np = np.concatenate([self.mask_weights_np, mw], axis=0)
+        #     self.DEBUG_STEPS -= self.DEBUG_STEPS_JUMP
+        #     if self.DEBUG_STEPS <= 0:
+        #         _dp = './debug/mask_weights'
+        #         _fp = os.path.join(_dp, f'{self.mask_type}{self.mask_levels}_{self._layer_index}_{self.DEBUG_STEPS}')
+        #         import os, time
+        #         if not os.path.isdir(_dp):
+        #             os.makedirs(_dp)
+        #         np.save(self.mask_weights_np, _fp)
+        #         assert 0, f'[DEBUG] <WindowAttention_FishPP> saved numpy values to <{_fp}>'
         
         if self.global_proj_type == 'mix':
             mask_weights = mask_weights.reshape([1, N, N, self.global_heads, self.num_heads])
@@ -956,6 +991,27 @@ class SwinTransformer_FishPP(nn.Module):
             token_grid_size=self.token_grid_size,
             mask_levels=self.mask_levels,
         )
+        if 0:
+            # [1, 1, N, N, L] -> [N, N, L]
+            masks_np = masks[0, 0]
+            import time, os
+            import plotly.express as px
+            assert np.all(masks_np.sum(-1) == 1)
+            masks_img = (masks_np * np.arange(masks_np.shape[-1])).sum(-1)
+            fig = px.imshow(
+                masks_img,
+                template='plotly_dark',
+                height=1000,
+                width=1200,
+            )
+            _ts = time.strftime('%y%m%d_%H%M%S')
+            _dp = f'./debug'
+            _fp = os.path.join(_dp, f'{_ts}_{mask_type}{mask_levels}.png')
+            if not os.path.isdir(_dp):
+                os.makedirs(_dp)
+            fig.write_image(_fp)
+            assert 0, f'[DEBUG] done writing the masks to <{_fp}>'
+        
         masks = torch.tensor(
             masks,
             dtype=torch.float32, device='cuda', requires_grad=False,)

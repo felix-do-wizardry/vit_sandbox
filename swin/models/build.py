@@ -39,7 +39,7 @@ def build_model(config):
                                 global_proj_type=config.MODEL.FISHPP.FISH_GLOBAL_PROJ_TYPE,
                                 stage_limit=config.MODEL.FISHPP.FISH_STAGE_LIMIT,
                                 )
-    if model_type == 'swin':
+    elif model_type == 'swin':
         model = SwinTransformer(img_size=config.DATA.IMG_SIZE,
                                 patch_size=config.MODEL.SWIN.PATCH_SIZE,
                                 in_chans=config.MODEL.SWIN.IN_CHANS,
