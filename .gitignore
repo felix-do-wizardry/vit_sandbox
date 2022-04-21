@@ -33,3 +33,5 @@ xcit/events.out.*
 xcit/.ipynb_checkpoints/*
 xcit/detection/data
 xcit/semantic_segmentation/data
+transformer-xl/pytorch/debug/*
+xcit/wandb/*
