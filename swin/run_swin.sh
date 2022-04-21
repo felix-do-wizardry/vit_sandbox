@@ -59,17 +59,17 @@ CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node 1 --m
 python -m torch.distributed.launch --nproc_per_node 1 --master_port 12799 main.py \
     --data-path /host/ubuntu/data/imagenet2012 --output /host/ubuntu/vision/fishpp_swin_temp \
     --batch-size 8 --accumulation-steps 8 \
-    --cfg configs/swinT_dist3_gr3m.yaml
+    --cfg configs/swinT_dist3_gr3m.yaml --wandb 0
 
 python -m torch.distributed.launch --nproc_per_node 1 --master_port 12799 main.py \
     --data-path /host/ubuntu/data/imagenet2012 --output /host/ubuntu/vision/fishpp_swin_temp \
     --batch-size 8 --accumulation-steps 8 \
-    --cfg configs/swinT_distq3_gr3m.yaml
+    --cfg configs/swinT_distq3_gr3m.yaml --wandb 0
 
 python -m torch.distributed.launch --nproc_per_node 1 --master_port 12799 main.py \
     --data-path /host/ubuntu/data/imagenet2012 --output /host/ubuntu/vision/fishpp_swin_temp \
     --batch-size 8 --accumulation-steps 8 \
-    --cfg configs/swinT_cross3_gr3m.yaml
+    --cfg configs/swinT_cross3_gr3m.yaml --wandb 0
 
 
 

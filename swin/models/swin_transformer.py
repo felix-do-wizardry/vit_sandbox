@@ -11,7 +11,7 @@ import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 import numpy as np
-from models.h_matrix import H_Matrix, H_Matrix_Masks, MASK_TYPES
+from models.h_matrix import H_Matrix_Masks
 
 # WINDOW_ATTN_LAYER_INDEX = 0
 
@@ -952,7 +952,7 @@ class SwinTransformer_FishPP(nn.Module):
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         
-        assert mask_type in MASK_TYPES, f'[SWIN] only dist-based mask_type allowed, one of {MASK_TYPES}'
+        # assert mask_type in MASK_TYPES, f'[SWIN] only dist-based mask_type allowed, one of {MASK_TYPES}'
         assert stage_limit <= len(depths)
         self.stage_limit = stage_limit
         if self.stage_limit <= 0:
@@ -983,34 +983,45 @@ class SwinTransformer_FishPP(nn.Module):
         self.mask_type = mask_type
         self.token_grid_size = window_size
         self.mask_levels = mask_levels
-        masks, mask_base, _ = H_Matrix_Masks.get_masks(
+        masks, mask_base, mask_levels_final = H_Matrix_Masks.get_masks(
             mask_type=self.mask_type,
-            cls_token_type='sum',
-            cls_token_pos=None,
+            cls_token_type='pos',
+            cls_token_pos=0.5,
             cls_token_count=0,
             token_grid_size=self.token_grid_size,
             mask_levels=self.mask_levels,
         )
-        if 0:
-            # [1, 1, N, N, L] -> [N, N, L]
-            masks_np = masks[0, 0]
-            import time, os
-            import plotly.express as px
-            assert np.all(masks_np.sum(-1) == 1)
-            masks_img = (masks_np * np.arange(masks_np.shape[-1])).sum(-1)
-            fig = px.imshow(
-                masks_img,
-                template='plotly_dark',
-                height=1000,
-                width=1200,
-            )
-            _ts = time.strftime('%y%m%d_%H%M%S')
-            _dp = f'./debug'
-            _fp = os.path.join(_dp, f'{_ts}_{mask_type}{mask_levels}.png')
-            if not os.path.isdir(_dp):
-                os.makedirs(_dp)
-            fig.write_image(_fp)
-            assert 0, f'[DEBUG] done writing the masks to <{_fp}>'
+        
+        # analyze masks
+        print(f'\n<Swin> [FISHPP] mask_type[{self.mask_type}] mask_levels[{self.mask_levels}] t[{self.token_grid_size}]')
+        masks_np = masks
+        masks_dist = masks_np.reshape(-1, masks_np.shape[-1]).mean(0)
+        print(f'\n[INFO] masks.shape{masks_np.shape} dist{list(masks_dist.round(4))}')
+        if mask_levels_final > self.mask_levels:
+            print('(last [dist] is for CLS)')
+        
+        print()
+        
+        # if 0:
+        #     # [1, 1, N, N, L] -> [N, N, L]
+        #     masks_np = masks[0, 0]
+        #     import time, os
+        #     import plotly.express as px
+        #     assert np.all(masks_np.sum(-1) == 1)
+        #     masks_img = (masks_np * np.arange(masks_np.shape[-1])).sum(-1)
+        #     fig = px.imshow(
+        #         masks_img,
+        #         template='plotly_dark',
+        #         height=1000,
+        #         width=1200,
+        #     )
+        #     _ts = time.strftime('%y%m%d_%H%M%S')
+        #     _dp = f'./debug'
+        #     _fp = os.path.join(_dp, f'{_ts}_{mask_type}{mask_levels}.png')
+        #     if not os.path.isdir(_dp):
+        #         os.makedirs(_dp)
+        #     fig.write_image(_fp)
+        #     assert 0, f'[DEBUG] done writing the masks to <{_fp}>'
         
         masks = torch.tensor(
             masks,

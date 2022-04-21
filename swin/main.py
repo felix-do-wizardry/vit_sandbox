@@ -195,8 +195,6 @@ def main(config, args):
 
         start_time_epoch = time.time()
         train_stats = train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
-        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
-            save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
         elapsed_time_epoch_train = time.time() - start_time_epoch
 
         acc1, acc5, loss = validate(config, data_loader_val, model)
@@ -208,6 +206,13 @@ def main(config, args):
         elapsed_time_epoch_test = time.time() - start_time_epoch - elapsed_time_epoch_train
         
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
+        
+        # if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+        #     save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
+        
+        if dist.get_rank() == 0 and (epoch == 0 or acc1 > max_accuracy):
+            save_checkpoint(config, epoch, model_without_ddp, acc1, optimizer, lr_scheduler, logger, save_as_best=True)
+        
         max_accuracy = max(max_accuracy, acc1)
         max_accuracy5 = max(max_accuracy5, acc5)
         logger.info(f'Max accuracy: {max_accuracy:.2f}%')
