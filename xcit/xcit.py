@@ -16,6 +16,9 @@ from timm.models.vision_transformer import _cfg, Mlp
 from timm.models.registry import register_model
 from timm.models.layers import DropPath, trunc_normal_, to_2tuple
 
+from fishpp import Global_QKV, Global_Attn
+from h_matrix import H_Matrix_Masks
+
 
 class PositionalEncodingFourier(nn.Module):
     """
@@ -261,16 +264,108 @@ class XCA(nn.Module):
         return {'temperature'}
 
 
+
+# %% 
+# TODO: [1/2] implement into xcit XCA class (XCiT cross-covariance vit attention)
+class XCA_FishPP(nn.Module):
+    """ Cross-Covariance Attention (XCA) operation where the channels are updated using a weighted
+     sum. The weights are obtained from the (softmax normalized) Cross-covariance
+    matrix (Q^T K \\in d_h \\times d_h)
+    """
+    def __init__(self,
+                dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.,
+                masks=None,
+                mask_levels=3,
+                global_heads=3,
+                global_proj_type='mix',
+                non_linear=False,
+                non_linear_bias=False,
+                
+                # mask_type=mask_type,
+                
+                ):
+        super().__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(global_heads, 1, 1))
+
+        # self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+        
+        self.global_qkv = Global_QKV(
+            dim=dim,
+            local_heads=num_heads,
+            global_heads=global_heads,
+            qkv_bias=qkv_bias
+        )
+        self.global_attn = Global_Attn(
+            masks=masks,
+            mask_levels=mask_levels,
+            local_heads=num_heads,
+            global_heads=global_heads,
+            global_proj_type=global_proj_type,
+            non_linear=non_linear,
+            non_linear_bias=non_linear_bias,
+        )
+    
+    def forward(self, x):
+        B, N, C = x.shape
+        
+        
+        # QKV
+        # qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
+        # qkv = qkv.permute(2, 0, 3, 1, 4)
+        # q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = self.global_qkv(x)
+        
+        
+        q = q.transpose(-2, -1)
+        k = k.transpose(-2, -1)
+        v = v.transpose(-2, -1)
+        
+        q = torch.nn.functional.normalize(q, dim=-1)
+        k = torch.nn.functional.normalize(k, dim=-1)
+        
+        
+        # ATTN
+        # attn = (q @ k.transpose(-2, -1)) * self.temperature
+        attn = self.global_attn(q=q, k=k, temperature=self.temperature)
+        
+        
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+        
+        x = (attn @ v).permute(0, 3, 1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'temperature'}
+
+
 class XCABlock(nn.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0.,
                  attn_drop=0., drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,
-                 num_tokens=196, eta=None):
+                 num_tokens=196, eta=None,
+                 fishpp=False,
+                 **kwargs,
+                 ):
         super().__init__()
         self.norm1 = norm_layer(dim)
-        self.attn = XCA(
-            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop,
-            proj_drop=drop
-        )
+        if fishpp:
+            self.attn = XCA_FishPP(
+                dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop,
+                proj_drop=drop,
+                **kwargs,
+            )
+        else:
+            self.attn = XCA(
+                dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop,
+                proj_drop=drop
+            )
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
 
@@ -292,6 +387,7 @@ class XCABlock(nn.Module):
         return x
 
 
+# TODO: add fishpp directly into the main class
 class XCiT(nn.Module):
     """
     Based on timm and DeiT code bases
@@ -300,9 +396,19 @@ class XCiT(nn.Module):
     """
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768,
-                 depth=12, num_heads=12, mlp_ratio=4., qkv_bias=True, qk_scale=None,
-                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0., norm_layer=None,
-                 cls_attn_layers=2, use_pos=True, patch_proj='linear', eta=None, tokens_norm=False):
+                depth=12, num_heads=12, mlp_ratio=4., qkv_bias=True, qk_scale=None,
+                drop_rate=0., attn_drop_rate=0., drop_path_rate=0., norm_layer=None,
+                cls_attn_layers=2, use_pos=True, patch_proj='linear', eta=None, tokens_norm=False,
+                
+                fishpp=False,
+                global_heads=1,
+                mask_type='h',
+                mask_levels=3,
+                non_linear=0,
+                non_linear_bias=1,
+                global_proj_type='mix',
+                layer_limit=-1,
+                ):
         """
         Args:
             img_size (int, tuple): input image size
@@ -338,12 +444,55 @@ class XCiT(nn.Module):
         self.pos_drop = nn.Dropout(p=drop_rate)
 
         dpr = [drop_path_rate for i in range(depth)]
-        self.blocks = nn.ModuleList([
-            XCABlock(
-                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,
-                qk_scale=qk_scale, drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i],
-                norm_layer=norm_layer, num_tokens=num_patches, eta=eta)
-            for i in range(depth)])
+        if fishpp:
+            _token_count = embed_dim // num_heads
+            print('<XCiT> [FISHPP] mask[{mask_type}{mask_levels}] n[{_token_count}]')
+            masks_np, mask_base, mask_levels_final = H_Matrix_Masks.get_masks_1d(
+                token_count=_token_count,
+                mask_type=mask_type,
+                # cls_token_type='pos',
+                # cls_token_pos=0.5,
+                cls_token_count=0,
+                mask_levels=mask_levels,
+            )
+            masks = torch.tensor(
+                masks_np,
+                dtype=torch.float32, device='cuda', requires_grad=False,)
+            
+        else:
+            print('<XCiT> [BASE]')
+        _layers = []
+        for i in range(depth):
+            if fishpp and (layer_limit < 0 or i < layer_limit):
+                _layers.append(XCABlock(
+                    dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,
+                    qk_scale=qk_scale, drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i],
+                    norm_layer=norm_layer, num_tokens=num_patches, eta=eta,
+                    
+                    fishpp=True,
+                    masks=masks,
+                    
+                    mask_type=mask_type,
+                    mask_levels=mask_levels,
+                    global_heads=global_heads,
+                    non_linear=non_linear,
+                    non_linear_bias=non_linear_bias,
+                    global_proj_type=global_proj_type,
+                ))
+            else:
+                _layers.append(XCABlock(
+                    dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,
+                    qk_scale=qk_scale, drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i],
+                    norm_layer=norm_layer, num_tokens=num_patches, eta=eta
+                ))
+        self.blocks = nn.ModuleList(_layers)
+        # self.blocks = nn.ModuleList([
+        #     XCABlock(
+        #         dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,
+        #         qk_scale=qk_scale, drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i],
+        #         norm_layer=norm_layer, num_tokens=num_patches, eta=eta)
+        #     for i in range(depth)
+        #     ])
 
         self.cls_attn_blocks = nn.ModuleList([
             ClassAttentionBlock(

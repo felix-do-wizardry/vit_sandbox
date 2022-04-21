@@ -20,7 +20,8 @@ from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.scheduler import create_scheduler
 from timm.optim import create_optimizer
-from timm.utils import NativeScaler, get_state_dict, ModelEma
+# from timm.utils import NativeScaler, get_state_dict, ModelEma
+from timm.utils import get_state_dict, ModelEma
 
 from datasets import build_dataset
 from engine import train_one_epoch, evaluate
@@ -28,14 +29,40 @@ from losses import DistillationLoss
 from samplers import RASampler
 import utils
 
-import xcit
+from fishpp import Experiment, NativeScaler
+from telemetry import WnB_Run
 
+import xcit
+import wandb
+
+# TODO: add wandb
+# TODO: add accumulation training
 
 def get_args_parser():
     parser = argparse.ArgumentParser('XCiT training and evaluation script', add_help=False)
     parser.add_argument('--batch-size', default=64, type=int)
     parser.add_argument('--epochs', default=400, type=int)
-
+    
+    
+    
+    parser.add_argument('--fishpp', default=0, type=int, help='whether to use fish++ h-matrix sparsity')
+    parser.add_argument('--fish_global_heads', default=1, type=int, help='number of global head attention matrices')
+    parser.add_argument('--fish_mask_levels', default=3, type=int, help='number of h-matrix levels')
+    parser.add_argument('--fish_mask_type', default='h', type=str, help='type of mask, one of `h1d`, `h`, `hdist`, `dist`')
+    parser.add_argument('--fish_non_linear', default=0, type=int, help='whether to use non-linear fish head projection')
+    parser.add_argument('--fish_non_linear_bias', default=1, type=int, help='whether to use bias with non-linear fish head projection')
+    
+    parser.add_argument('--fish_global_proj_type', default='mix', type=str, help='method type to mix global head masks [base, full, mix] (default=full)')
+    
+    parser.add_argument('--fish_layer_limit', default=-1, type=int, help='whether to limit the fishpp layer count, neg means not using')
+    
+    parser.add_argument('--accumulation_steps', default=0, type=int, help='number of steps to accumulate grads before update, will increase the effective batch size')
+    
+    # parser.add_argument('--exp_name', default='', type=str, help='name of the experiment, set to overwrite | leave blank to be set')
+    parser.add_argument('--wandb', default=1, type=int, help='wandb')
+    
+    
+    
     # Model parameters
     parser.add_argument('--model', default='xcit_s_12', type=str, metavar='MODEL',
                         help='Name of model to train')
@@ -190,7 +217,49 @@ def main(args):
     utils.init_distributed_mode(args)
 
     print(args)
-
+    
+    EXP = Experiment(
+        fishpp=args.fishpp,
+        model=args.model,
+        mask_type=args.fish_mask_type,
+        mask_levels=args.fish_mask_levels,
+        global_heads_str=args.fish_global_heads,
+        global_proj_str=args.fish_global_proj_type[0],
+        bs=args.batch_size,
+        gpu=utils.get_world_size(),
+        accumulation_steps=args.accumulation_steps,
+        
+        # TODO:
+        # fish_layer_limit,
+        # fish_non_linear,
+        # fish_non_linear_bias,
+    )
+    # time_stamp = EXP.time_stamp
+    
+    RUN = WnB_Run(
+        entity='fpt-team',
+        project='fishpp_xcit',
+        name=EXP.exp_name,
+        # config=None,
+        args=args,
+        # max_metrics=['acc', 'acc5', 'train_mem_gb',],
+        # min_metrics=None,
+        step_metric='epoch',
+        # with_timestamp=True,
+        summary=dict(
+            _epoch=-1,
+            _acc=0.0,
+            _acc5=0.0,
+            _type=EXP.name_type,
+            _bs=EXP.bs,
+            _bs_eff=EXP.bs_eff,
+            _gpu=EXP.gpu,
+            _image_size=224,
+        ),
+        enabled=utils.get_rank() == 0,
+    )
+    print('RUN:', RUN)
+    
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
@@ -380,17 +449,24 @@ def main(args):
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
     max_accuracy = 0.0
+    max_accuracy5 = 0.0
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
 
+        RUN.timer_start('epoch_time', 's')
+        RUN.timer_start('train_time', 's')
+        
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
             optimizer, device, epoch, loss_scaler,
             args.clip_grad, model_ema, mixup_fn,
-            surgery=args.surgery
+            surgery=args.surgery,
+            accumulation_steps=args.accumulation_steps,
         )
-
+        
+        RUN.timer_stop('train_time')
+        
         lr_scheduler.step(epoch)
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
@@ -404,7 +480,8 @@ def main(args):
                     'scaler': loss_scaler.state_dict(),
                     'args': args,
                 }, checkpoint_path)
-
+        
+        RUN.timer_start('test_time', 's')
         if (epoch % args.test_freq == 0) or (epoch == args.epochs - 1):
             test_stats = evaluate(data_loader_val, model, device)
 
@@ -420,6 +497,7 @@ def main(args):
 
             print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
             max_accuracy = max(max_accuracy, test_stats["acc1"])
+            max_accuracy5 = max(max_accuracy5, test_stats["acc5"])
             print(f'Max accuracy: {max_accuracy:.2f}%')
 
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
@@ -430,6 +508,32 @@ def main(args):
             if args.output_dir and utils.is_main_process():
                 with (output_dir / "log.txt").open("a") as f:
                     f.write(json.dumps(log_stats) + "\n")
+            
+            _time_delays = [1 + np.random.sample() * 1, 0.5 + np.random.sample() * 0.25]
+            # print(f'epoch[{epoch}/{epochs}] delays{_time_delays}')
+            
+        RUN.timer_stop('test_time')
+        RUN.timer_stop('epoch_time')
+        
+        RUN.log(
+            summary=dict(
+                _epoch=epoch,
+                _acc=max_accuracy,
+                _acc5=max_accuracy5,
+            ),
+            log=dict(
+                epoch=epoch,
+                train_loss=train_stats['loss'],
+                lr=train_stats['lr'],
+                test_acc=test_stats["acc1"],
+                test_acc5=test_stats["acc5"],
+                test_loss=test_stats["loss"],
+            ),
+            mem='train_mem_gb',
+        )
+        
+    RUN.finish()
+
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
