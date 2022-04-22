@@ -247,14 +247,14 @@ def main(args):
         step_metric='epoch',
         # with_timestamp=True,
         summary=dict(
-            _epoch=-1,
-            _acc=0.0,
-            _acc5=0.0,
-            _type=EXP.name_type,
-            _bs=EXP.bs,
-            _bs_eff=EXP.bs_eff,
-            _gpu=EXP.gpu,
-            _image_size=224,
+            epoch=-1,
+            acc=0.0,
+            acc5=0.0,
+            type=EXP.name_type,
+            bs=EXP.bs,
+            bs_eff=EXP.bs_eff,
+            gpu=EXP.gpu,
+            image_size=224,
         ),
         enabled=utils.get_rank() == 0,
     )
@@ -529,9 +529,9 @@ def main(args):
         
         RUN.log(
             summary=dict(
-                _epoch=epoch,
-                _acc=max_accuracy,
-                _acc5=max_accuracy5,
+                epoch=epoch,
+                acc=max_accuracy,
+                acc5=max_accuracy5,
             ),
             log=dict(
                 epoch=epoch,
