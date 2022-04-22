@@ -281,9 +281,10 @@ class XCA_FishPP(nn.Module):
                 non_linear=False,
                 non_linear_bias=False,
                 
-                # mask_type=mask_type,
-                
+                mask_type='h',
+                # **kwargs,
                 ):
+        # kwargs
         super().__init__()
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(global_heads, 1, 1))

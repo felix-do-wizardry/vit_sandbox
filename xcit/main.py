@@ -328,7 +328,19 @@ def main(args):
         num_classes=args.nb_classes,
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
-        drop_block_rate=None
+        drop_block_rate=None,
+        
+        # TODO: modify model creation
+        fishpp=args.fishpp,
+        
+        mask_type=args.fish_mask_type,
+        mask_levels=args.fish_mask_levels,
+        global_heads=args.fish_global_heads,
+        global_proj_type=args.fish_global_proj_type,
+        
+        non_linear=0,
+        non_linear_bias=1,
+        layer_limit=-1,
     )
 
     if args.pretrained:
