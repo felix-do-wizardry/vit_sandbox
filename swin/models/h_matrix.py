@@ -672,19 +672,4 @@ if __name__ == '__main__':
     Matrix.plot_matrix(m).show()
     Matrix.plot_matrix_grid(m[_cls_token_count:, _cls_token_count:]).show()
 
-
 # %%
-masks, mask_base, mask_levels_final = H_Matrix_Masks.get_masks(
-    token_grid_size=7,
-    mask_type='cross',
-    cls_token_type='pos',
-    cls_token_pos=0.5,
-    cls_token_count=0,
-    mask_levels=3,
-)
-masks.shape
-
-m = (masks.reshape(-1, 1) * np.arange(mask_levels_final)).sum(-1)
-print('> cross')
-Matrix.plot_matrix(m).show()
-Matrix.plot_matrix_grid(m).show()
