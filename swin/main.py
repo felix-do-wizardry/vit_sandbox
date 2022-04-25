@@ -27,6 +27,9 @@ from optimizer import build_optimizer
 from logger import create_logger
 from utils import load_checkpoint, load_pretrained, save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor
 
+from telemetry import WnB_Run
+from fishpp import Experiment
+
 try:
     # noinspection PyUnresolvedReferences
     from apex import amp
@@ -81,52 +84,94 @@ def parse_option():
 
 def main(config, args):
     
-    time_stamp = time.strftime('%y%m%d_%H%M%S')
-    _acml = max(1, config.TRAIN.ACCUMULATION_STEPS)
-    _bs_eff = _acml * config.DATA.BATCH_SIZE * dist.get_world_size()
+    # time_stamp = time.strftime('%y%m%d_%H%M%S')
+    # _acml = max(1, config.TRAIN.ACCUMULATION_STEPS)
+    # _bs_eff = _acml * config.DATA.BATCH_SIZE * dist.get_world_size()
     
-    model_name_short = config.MODEL.NAME.split('_')[0]
-    _fish_type_str = '_'.join(config.MODEL.NAME.split('_')[1:])
-    exp_name = '_'.join([
-        time_stamp,
-        model_name_short,
-        _fish_type_str,
-        f'bs{config.DATA.BATCH_SIZE}x{dist.get_world_size()}' + (
-            f'x{args.accumulation_steps}' if args.accumulation_steps >= 2 else ''),
-    ])
+    # model_name_short = config.MODEL.NAME.split('_')[0]
+    # _fish_type_str = '_'.join(config.MODEL.NAME.split('_')[1:])
+    # exp_name = '_'.join([
+    #     time_stamp,
+    #     model_name_short,
+    #     _fish_type_str,
+    #     f'bs{config.DATA.BATCH_SIZE}x{dist.get_world_size()}' + (
+    #         f'x{args.accumulation_steps}' if args.accumulation_steps >= 2 else ''),
+    # ])
+    EXP = Experiment(
+        model=config.MODEL.NAME.split('_')[0],
+        fishpp=bool(config.MODEL.FISHPP.FISHPP),
+        
+        bs=config.DATA.BATCH_SIZE,
+        gpu=dist.get_world_size(),
+        accumulation_steps=args.accumulation_steps,
+        
+        mask_type=config.MODEL.FISHPP.FISH_MASK_TYPE,
+        mask_levels=config.MODEL.FISHPP.FISH_MASK_LEVELS,
+        
+        global_heads_str=f'r{config.MODEL.FISHPP.FISH_GLOBAL_HEADS_RATIO}',
+        global_proj_str=str(config.MODEL.FISHPP.FISH_GLOBAL_PROJ_TYPE)[0],
+        
+        non_linear=config.MODEL.FISHPP.FISH_NON_LINEAR,
+        non_linear_bias=config.MODEL.FISHPP.FISH_NON_LINEAR_BIAS,
+        layer_limit=-1,
+        stage_limit=config.MODEL.FISHPP.FISH_STAGE_LIMIT,
+        time_stamp=None,
+    )
     
-    if dist.get_rank() == 0 and args.wandb:
+    RUN = WnB_Run(
+        entity='fpt-team',
+        project='ImageNet_fishpp_swin',
+        name=EXP.exp_name,
+        args=args,
+        # max_metrics=['acc', 'acc5', 'train_mem_gb',],
+        # min_metrics=None,
+        step_metric='epoch',
+        # with_timestamp=True,
+        summary=dict(
+            epoch=-1,
+            acc=0.0,
+            acc5=0.0,
+            type=EXP.name_type,
+            bs=EXP.bs,
+            bs_eff=EXP.bs_eff,
+            gpu=EXP.gpu,
+            image_size=config.DATA.IMG_SIZE,
+        ),
+        enabled=dist.get_rank() == 0 and args.wandb,
+    )
+    
+    # if dist.get_rank() == 0 and args.wandb:
         
-        _project = f'ImageNet_fishpp_swin'
-        wandb.init(
-            project=_project,
-            entity='fpt-team',
-            config={},
-            name=exp_name,
-        )
+    #     _project = f'ImageNet_fishpp_swin'
+    #     wandb.init(
+    #         project=_project,
+    #         entity='fpt-team',
+    #         config={},
+    #         name=exp_name,
+    #     )
         
-        # set all other train/ metrics to use this step
-        _step_metric = 'epoch'
-        wandb.define_metric(_step_metric)
-        wandb.define_metric("*", step_metric=_step_metric)
+    #     # set all other train/ metrics to use this step
+    #     _step_metric = 'epoch'
+    #     wandb.define_metric(_step_metric)
+    #     wandb.define_metric("*", step_metric=_step_metric)
         
-        wandb.define_metric("test_acc1", summary="max")
-        wandb.define_metric("test_acc5", summary="max")
-        wandb.define_metric("train_mem_gb", summary="max")
+    #     wandb.define_metric("test_acc1", summary="max")
+    #     wandb.define_metric("test_acc5", summary="max")
+    #     wandb.define_metric("train_mem_gb", summary="max")
         
-        wandb.run.summary['timestamp'] = time_stamp
-        wandb.run.summary['epoch'] = -1
-        wandb.run.summary['acc'] = 0.0
-        wandb.run.summary['acc5'] = 0.0
-        wandb.run.summary['type'] = _fish_type_str
-        wandb.run.summary['bs'] = config.DATA.BATCH_SIZE
-        wandb.run.summary['bs_eff'] = _bs_eff
-        wandb.run.summary['gpu'] = dist.get_world_size()
-        wandb.run.summary['image_size'] = config.DATA.IMG_SIZE
-        # wandb.run.summary.update()
+    #     wandb.run.summary['timestamp'] = time_stamp
+    #     wandb.run.summary['epoch'] = -1
+    #     wandb.run.summary['acc'] = 0.0
+    #     wandb.run.summary['acc5'] = 0.0
+    #     wandb.run.summary['type'] = _fish_type_str
+    #     wandb.run.summary['bs'] = config.DATA.BATCH_SIZE
+    #     wandb.run.summary['bs_eff'] = _bs_eff
+    #     wandb.run.summary['gpu'] = dist.get_world_size()
+    #     wandb.run.summary['image_size'] = config.DATA.IMG_SIZE
+    #     # wandb.run.summary.update()
         
-        wandb.config.update(args)
-        print(f"Initiated WandB project[{_project}] name[{exp_name}]")
+    #     wandb.config.update(args)
+    #     print(f"Initiated WandB project[{_project}] name[{exp_name}]")
         
     dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)
 
@@ -134,6 +179,25 @@ def main(config, args):
     model = build_model(config)
     model.cuda()
     # logger.info(str(model))
+    
+    logger.info("FLOPS + Params")
+    _gflops = RUN.calc_flops(
+        input_shape=[EXP.bs, 3, config.DATA.IMG_SIZE, config.DATA.IMG_SIZE],
+        model=model,
+        device='cuda',
+    ) / EXP.bs / 1e9
+    _params = RUN.calc_params(
+        model=model,
+    )
+    RUN.log(
+        summary={
+            'gflops': _gflops,
+            'params': _params,
+        },
+        mem=None,
+        on_hold=True,
+    )
+    
 
     optimizer = build_optimizer(config, model)
     if config.AMP_OPT_LEVEL != "O0":
@@ -187,17 +251,30 @@ def main(config, args):
     if config.THROUGHPUT_MODE:
         throughput(data_loader_val, model, logger)
         return
-
+    
     logger.info("Start training")
     start_time = time.time()
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
         data_loader_train.sampler.set_epoch(epoch)
 
         start_time_epoch = time.time()
+        
+        RUN.timer_start('epoch_time')
+        RUN.timer_start('train_time')
+        
         train_stats = train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
+        
+        RUN.timer_stop('train_time')
+        
         elapsed_time_epoch_train = time.time() - start_time_epoch
 
+        RUN.timer_start('test_time')
+        
         acc1, acc5, loss = validate(config, data_loader_val, model)
+        
+        RUN.timer_stop('test_time')
+        RUN.timer_stop('epoch_time')
+        
         test_stats = {
             'acc1': float(acc1),
             'acc5': float(acc5),
@@ -217,28 +294,45 @@ def main(config, args):
         max_accuracy5 = max(max_accuracy5, acc5)
         logger.info(f'Max accuracy: {max_accuracy:.2f}%')
         
-        _mem_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
-        # speed_train = 1_281_167 / elapsed_time_epoch_train
-        # speed_test = 50_000 / elapsed_time_epoch_test
+        # _mem_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
         
-        if dist.get_rank() == 0 and args.wandb:
-            wandb_dict = {
-                'epoch': epoch,
-                **{f'train_{k}': v for k, v in train_stats.items()},
-                **{f'test_{k}': v for k, v in test_stats.items()},
-                'train_time_h': elapsed_time_epoch_train / 3600,
-                'test_time_h': elapsed_time_epoch_test / 3600,
-                # 'elapsed_time_h': elapsed_time / 3600,
-                'train_mem_gb': float(_mem_gb),
-                # 'speed_train': speed_train,
-                # 'speed_test': speed_test,
-                # **metrics,
-            }
-            wandb.run.summary['epoch'] = int(epoch)
-            wandb.run.summary['acc'] = float(max_accuracy)
-            wandb.run.summary['acc5'] = float(max_accuracy5)
-            wandb.log(wandb_dict)
-            print(f'[WandB]: {wandb_dict}')
+        # if dist.get_rank() == 0 and args.wandb:
+        #     wandb_dict = {
+        #         'epoch': epoch,
+        #         **{f'train_{k}': v for k, v in train_stats.items()},
+        #         **{f'test_{k}': v for k, v in test_stats.items()},
+        #         'train_time_h': elapsed_time_epoch_train / 3600,
+        #         'test_time_h': elapsed_time_epoch_test / 3600,
+        #         # 'elapsed_time_h': elapsed_time / 3600,
+        #         'train_mem_gb': float(_mem_gb),
+        #         # 'speed_train': speed_train,
+        #         # 'speed_test': speed_test,
+        #         # **metrics,
+        #     }
+        #     wandb.run.summary['epoch'] = int(epoch)
+        #     wandb.run.summary['acc'] = float(max_accuracy)
+        #     wandb.run.summary['acc5'] = float(max_accuracy5)
+        #     wandb.log(wandb_dict)
+        #     print(f'[WandB]: {wandb_dict}')
+        
+        RUN.log(
+            summary=dict(
+                epoch=int(epoch),
+                acc=float(max_accuracy),
+                acc5=float(max_accuracy5),
+            ),
+            log=dict(
+                epoch=int(epoch),
+                train_loss=train_stats['loss'],
+                train_lr=train_stats['lr'],
+                test_acc1=test_stats["acc1"],
+                test_acc5=test_stats["acc5"],
+                test_loss=test_stats["loss"],
+            ),
+            mem='train_mem_gb',
+        )
+    
+    RUN.finish()
     
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

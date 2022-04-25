@@ -13,6 +13,7 @@ def build_model(config):
     model_type = config.MODEL.TYPE
     _fishpp = config.MODEL.FISHPP.FISHPP
     if _fishpp:
+        print('[BUILD] [FISHPP]')
         model = SwinTransformer_FishPP(
                                 img_size=config.DATA.IMG_SIZE,
                                 patch_size=config.MODEL.SWIN.PATCH_SIZE,
@@ -40,6 +41,7 @@ def build_model(config):
                                 stage_limit=config.MODEL.FISHPP.FISH_STAGE_LIMIT,
                                 )
     elif model_type == 'swin':
+        print('[BUILD] [BASE]')
         model = SwinTransformer(img_size=config.DATA.IMG_SIZE,
                                 patch_size=config.MODEL.SWIN.PATCH_SIZE,
                                 in_chans=config.MODEL.SWIN.IN_CHANS,
