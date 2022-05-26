@@ -11,13 +11,6 @@ from fvcore.nn import FlopCountAnalysis
 
 from backbones.vision_transformer import VisionTransformer_FishPP, VisionTransformer
 
-# import warnings
-# warnings.filterwarnings("ignore", message='Unsupported operator*')
-# # Unsupported operator aten::add encountered 25 time(s)
-# # Unsupported operator aten::mul encountered 12 time(s)
-# # Unsupported operator aten::softmax encountered 12 time(s)
-# # Unsupported operator aten::gelu encountered 12 time(s)
-
 # %%
 def get_metrics(model, img_size=224, bs=64):
     torch.cuda.empty_cache()

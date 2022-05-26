@@ -8,8 +8,8 @@ from functools import partial
 from timm.models.registry import register_model
 from timm.models.layers import trunc_normal_
 
-from backbones.vision_transformer import VisionTransformer, VisionTransformer_FishPP, _cfg
-# from backbones.vision_transformer import _cfg
+# from backbones.vision_transformer import VisionTransformer, VisionTransformer_FishPP, _cfg
+from backbones.vision_transformer import VisionTransformer, VisionTransformer_FiAK, _cfg
 
 
 __all__ = [
@@ -62,11 +62,10 @@ class DistilledVisionTransformer(VisionTransformer):
 
 
 # %%
-def get_deit_model(fishpp=False, **kwargs):
-    # fishpp = kwargs.get('fishpp', False)
-    if fishpp:
-        print('`models.get_deit_model` - using fishpp')
-        model = VisionTransformer_FishPP(**kwargs)
+def get_deit_model(type=False, **kwargs):
+    if type in ['fiak', 'gmm']:
+        print(f'`models.get_deit_model` - using fiak with type[{type}]')
+        model = VisionTransformer_FiAK(type=type, **kwargs)
     else:
         print('`models.get_deit_model` - using base')
         model = VisionTransformer(**kwargs)

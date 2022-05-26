@@ -34,33 +34,19 @@ from fvcore.nn import FlopCountAnalysis
 def get_args_parser():
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
     
-    # FISH++
-    parser.add_argument('--fishpp', default=0, type=int, help='whether to use fish++ h-matrix sparsity')
-    parser.add_argument('--fish_global_heads', default=1, type=int, help='number of global head attention matrices')
-    parser.add_argument('--fish_mask_levels', default=2, type=int, help='number of h-matrix levels')
-    parser.add_argument('--fish_mask_type', default='h', type=str, help='type of mask, one of `h1d`, `h`, `hdist`, `dist`')
-    parser.add_argument('--fish_non_linear', default=0, type=int, help='whether to use non-linear fish head projection')
-    parser.add_argument('--fish_non_linear_bias', default=1, type=int, help='whether to use bias with non-linear fish head projection')
+    parser.add_argument('--type', default='base', type=int, help='whether to use fiak/gmm, or baseline (set to any other str)')
+    parser.add_argument('--prune_total', default=0., type=float, help='how much to prune in total')
+    parser.add_argument('--prune_k', default=0., type=float, help='how much to prune for K')
     
-    # # whether each global head has its own projection to its local heads, previously 0
-    # parser.add_argument('--fish_global_full_proj', default=1, type=int, help='whether to do projection for each individual global head (should be 1) (omission -> 0)')
-    # # whether all global head masks are used for projection to (all) local heads, previously 0
-    # parser.add_argument('--fish_global_full_mix', default=0, type=int, help='whether mix all global head masks together (omission -> 0)')
-    # # whether cls has its own mask, previously 0 meaning not using
-    # parser.add_argument('--fish_cls_token_proj', default=1, type=int, help='whether cls has its own mask, must be 0 for type[dist] with cls_pos>=0 (omission -> 0)')
-    parser.add_argument('--fish_global_proj_type', default='full', type=str, help='method type to mix global head masks [base, full, mix] (default=full)')
-    parser.add_argument('--fish_cls_token_type', default='mask', type=str, help='method type to assign mask to CLS entries [copy, pos, mask, sum] (default=mask)')
-    
-    # position for cls token, previously -1/None meaning not using
-    parser.add_argument('--fish_cls_token_pos', default=-1, type=float, help='pos for cls token, negative means None, range = [0, 1]')
-    
-    parser.add_argument('--fish_layer_limit', default=-1, type=int, help='whether to limit the fishpp layer count, neg means not using')
+    parser.add_argument('--mode', default='train', type=str, help='running mode: [train, metric]')
     
     parser.add_argument('--accumulation_steps', default=0, type=int, help='number of steps to accumulate grads before update, will increase the effective batch size')
     
     parser.add_argument('--exp_name', default='', type=str, help='name of the experiment, set to overwrite | leave blank to be set')
     parser.add_argument('--wandb', default=1, type=int, help='wandb')
-    parser.add_argument('--metrics_only', default=0, type=int, help='whether to quickly calculate FULL metrics and exit')
+    
+    parser.add_argument('--metrics_only', default=1, type=int, help='whether to quickly calculate FULL metrics and exit')
+    
     parser.add_argument('--metrics', default=1, type=int, help='whether to calculate for flops and params metrics')
     parser.add_argument('--batch_limit', default=0, type=int, help='number of batches to limit training')
     
@@ -212,49 +198,26 @@ def main(args):
     
     # ADDED: parse and process args for fish++
     time_stamp = time.strftime('%y%m%d_%H%M%S')
-    model_name_short = str(args.model).replace(
-        'deit_base', 'deitB').replace(
-        'deit_small', 'deitS').replace(
-        'deit_tiny', 'deitT').replace(
-        '_patch', '_p')
+    model_name_short = str(args.model)
+    # model_name_short = model_name_short.replace(
+    #     'deit_base', 'deitB').replace(
+    #     'deit_small', 'deitS').replace(
+    #     'deit_tiny', 'deitT').replace(
+    #     '_patch', '_p')
     _acml = max(1, args.accumulation_steps)
     _bs_eff = _acml * args.batch_size * utils.get_world_size()
-    # bs_dict = {
-    #     'per_gpu': args.batch_size,
-    #     'gpus': utils.get_world_size(),
-    #     'accumulate': _acml,
-    #     'effective': _bs_eff,
-    # }
-    if args.fishpp:
-        assert args.fish_global_heads >= 1
-        assert args.fish_mask_levels >= 0
-        # assert args.fish_mask_type in ['h', 'hdist', 'dist', 'distq']
-        _fish_type_str_head = f'g{args.fish_global_heads}'
-        if args.fish_global_proj_type != 'base':
-            _fish_type_str_head = _fish_type_str_head + args.fish_global_proj_type[:1]
-        
-        _fish_type_str = '_'.join([
-            f'fishpp_{args.fish_mask_type}',
-            # f'g{args.fish_global_heads}' + ('f' if args.fish_global_full_proj else ''),
-            _fish_type_str_head,
-            f'hl{args.fish_mask_levels}{"nl" + ("b" if args.fish_non_linear_bias else "") if args.fish_non_linear else ""}',
-        ])
-        
-        if args.fish_cls_token_pos >= 0 and args.fish_mask_type == 'dist' and args.fish_cls_token_type == 'pos':
-            _fish_type_str = f'{_fish_type_str}_pos{args.fish_cls_token_pos}'
-        elif args.fish_cls_token_type in ['mask', 'sum']:
-            _fish_type_str = f'{_fish_type_str}_{args.fish_cls_token_type}'
-        
-        if args.fish_layer_limit >= 1:
-            _fish_type_str = f'{_fish_type_str}_r{args.fish_layer_limit}'
-    else:
-        _fish_type_str = f'baseline'
+    
     
     if not args.exp_name:
+        _type_name = ''
+        if args.type in ['fiak', 'gmm']:
+            _type_name = f'{args.type}'
+            if args.mode == 'metric':
+                _type_name = f'{_type_name}_{args.prune_total}_{args.prune_k}'
         args.exp_name = '_'.join([
             time_stamp,
             f'{model_name_short}',
-            _fish_type_str,
+            _type_name,
             f'bs{args.batch_size}x{utils.get_world_size()}' + (
                 f'x{args.accumulation_steps}' if args.accumulation_steps >= 2 else ''),
         ])
@@ -271,7 +234,7 @@ def main(args):
     print(f'bs[{args.batch_size}] x gpu[{utils.get_world_size()}]')
     print(f'output_dir[{args.output_dir}]')
     
-    print(f'process rank: utils[{utils.get_rank()}] args[{args.rank}]')
+    # print(f'process rank: utils[{utils.get_rank()}] args[{args.rank}]')
     
     if utils.is_main_process() and args.wandb:
         _project = f'ImageNet_fishpp_deit'
@@ -295,12 +258,11 @@ def main(args):
         wandb.run.summary['epoch'] = -1
         wandb.run.summary['acc'] = 0.0
         wandb.run.summary['acc5'] = 0.0
-        wandb.run.summary['type'] = _fish_type_str
+        wandb.run.summary['type'] = _type_name
         wandb.run.summary['bs'] = args.batch_size
         wandb.run.summary['bs_eff'] = _bs_eff
         wandb.run.summary['gpu'] = utils.get_world_size()
         wandb.run.summary['image_size'] = args.input_size
-        # wandb.run.summary.update()
         
         wandb.config.update(args)
         print(f"Initiated WandB project[{_project}] name[{args.exp_name}]")
@@ -379,25 +341,12 @@ def main(args):
         drop_path_rate=args.drop_path,
         drop_block_rate=None,
         
-        fishpp=args.fishpp,
-        global_heads=args.fish_global_heads,
-        mask_type=args.fish_mask_type,
-        mask_levels=args.fish_mask_levels,
-        non_linear=args.fish_non_linear,
-        non_linear_bias=args.fish_non_linear_bias,
-        cls_token_pos=args.fish_cls_token_pos,
-        
-        # global_full_proj=args.fish_global_full_proj,
-        # global_full_mix=args.fish_global_full_mix,
-        global_proj_type=args.fish_global_proj_type,
-        
-        cls_token_type=args.fish_cls_token_type,
-        
-        layer_limit=args.fish_layer_limit,
-        layer_offset=0,
-        
-        
-        metrics_test=args.metrics_test,
+        # metrics_test=args.metrics_test,
+        mode=args.mode,
+        type=args.type,
+        use_gpytorch=False,
+        prune_total=args.prune_total,
+        prune_k=args.prune_k,
     )
 
     if args.finetune:
@@ -515,66 +464,66 @@ def main(args):
             if 'scaler' in checkpoint:
                 loss_scaler.load_state_dict(checkpoint['scaler'])
         lr_scheduler.step(args.start_epoch)
-    if args.eval:
-        if args.metrics_test:
-            if utils.is_main_process():
-                _bs = args.batch_size
-                # _bs = 64
-                print(f'testing for metrics test (new), with bs[{_bs}]')
-                assert not args.wandb, 'no wandb for metrics_test'
-                # model.train(True)
-                model.eval()
+    # if args.eval:
+    #     if args.metrics_test:
+    #         if utils.is_main_process():
+    #             _bs = args.batch_size
+    #             # _bs = 64
+    #             print(f'testing for metrics test (new), with bs[{_bs}]')
+    #             assert not args.wandb, 'no wandb for metrics_test'
+    #             # model.train(True)
+    #             model.eval()
                 
-                _img_size = args.input_size
-                _input = torch.tensor(
-                    # np.random.sample([1, 3, _img_size, _img_size]),
-                    np.ones(shape=[_bs, 3, _img_size, _img_size]) / 2,
-                    dtype=torch.float32,
-                    device='cuda',
-                )
-                flops_ca = FlopCountAnalysis(model, _input)
-                _gflops = float(flops_ca.total() / 1e9)
-                _mem_gb = float(torch.cuda.max_memory_allocated() / (1024 ** 3))
-                print(f'\nmetrics TEST: bs[{_bs}]',
-                    f'fvcore_gflops[{_gflops:.3f}G ({_gflops/_bs:.3f}G/img)]',
-                    f'memory[{_mem_gb:.3f}GB ({_mem_gb/_bs:.3f}GB/img)]\n',)
+    #             _img_size = args.input_size
+    #             _input = torch.tensor(
+    #                 # np.random.sample([1, 3, _img_size, _img_size]),
+    #                 np.ones(shape=[_bs, 3, _img_size, _img_size]) / 2,
+    #                 dtype=torch.float32,
+    #                 device='cuda',
+    #             )
+    #             flops_ca = FlopCountAnalysis(model, _input)
+    #             _gflops = float(flops_ca.total() / 1e9)
+    #             _mem_gb = float(torch.cuda.max_memory_allocated() / (1024 ** 3))
+    #             print(f'\nmetrics TEST: bs[{_bs}]',
+    #                 f'fvcore_gflops[{_gflops:.3f}G ({_gflops/_bs:.3f}G/img)]',
+    #                 f'memory[{_mem_gb:.3f}GB ({_mem_gb/_bs:.3f}GB/img)]\n',)
                 
-                _metrics = {
-                    'bs': _bs,
-                    'gflops': _gflops,
-                    'memory': _mem_gb,
-                    **dict(
-                        fishpp=args.fishpp,
-                        global_heads=args.fish_global_heads,
-                        mask_type=args.fish_mask_type,
-                        mask_levels=args.fish_mask_levels,
-                        non_linear=args.fish_non_linear,
-                        non_linear_bias=args.fish_non_linear_bias,
-                        cls_token_pos=args.fish_cls_token_pos,
+    #             _metrics = {
+    #                 'bs': _bs,
+    #                 'gflops': _gflops,
+    #                 'memory': _mem_gb,
+    #                 **dict(
+    #                     fishpp=args.fishpp,
+    #                     global_heads=args.fish_global_heads,
+    #                     mask_type=args.fish_mask_type,
+    #                     mask_levels=args.fish_mask_levels,
+    #                     non_linear=args.fish_non_linear,
+    #                     non_linear_bias=args.fish_non_linear_bias,
+    #                     cls_token_pos=args.fish_cls_token_pos,
                         
-                        # global_full_proj=args.fish_global_full_proj,
-                        # global_full_mix=args.fish_global_full_mix,
-                        global_proj_type=args.fish_global_proj_type,
+    #                     # global_full_proj=args.fish_global_full_proj,
+    #                     # global_full_mix=args.fish_global_full_mix,
+    #                     global_proj_type=args.fish_global_proj_type,
                         
-                        cls_token_type=args.fish_cls_token_type,
+    #                     cls_token_type=args.fish_cls_token_type,
                         
-                        layer_limit=args.fish_layer_limit,
-                        layer_offset=0,
+    #                     layer_limit=args.fish_layer_limit,
+    #                     layer_offset=0,
                         
                         
-                        metrics_test=args.metrics_test,
-                    ),
-                }
-                _fp = os.path.join(args.output_dir, 'metrics.json')
-                with open(_fp, 'w') as fo:
-                    json.dump(_metrics, fo, indent=4)
-                print(f'metrics.json: <{_fp}>')
-            return
+    #                     metrics_test=args.metrics_test,
+    #                 ),
+    #             }
+    #             _fp = os.path.join(args.output_dir, 'metrics.json')
+    #             with open(_fp, 'w') as fo:
+    #                 json.dump(_metrics, fo, indent=4)
+    #             print(f'metrics.json: <{_fp}>')
+    #         return
         
-        test_stats = evaluate(data_loader_val, model, device)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+    #     test_stats = evaluate(data_loader_val, model, device)
+    #     print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         
-        return
+    #     return
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
@@ -588,58 +537,63 @@ def main(args):
         _batch_limit = None
         if args.metrics_only:
             assert args.accumulation_steps < 2, f'args.metrics_only==True | args.accumulation_steps[{args.accumulation_steps}] is not allowed'
-            _batch_limit = 100
+            if args.batch_limit > 0:
+                _batch_limit = args.batch_limit
+            else:
+                _batch_limit = 100
             args.metrics = 1
             print(f'\nargs.metrics_only==True, will test on {_batch_limit} batches',
                 f'({_batch_limit * args.batch_size} samples) for train and val, then exit\n')
         elif args.batch_limit > 0:
             _batch_limit = args.batch_limit
         
-        if args.metrics and utils.is_main_process() and epoch == 0:
-            print('testing for metrics A')
-            _img_size = args.input_size
-            _input = torch.tensor(
-                # np.random.sample([1, 3, _img_size, _img_size]),
-                np.ones(shape=[1, 3, _img_size, _img_size]) / 2,
-                dtype=torch.float32,
-                device='cuda',
-            )
-            model.train(True)
-            flops = FlopCountAnalysis(model, _input)
-            print(f'fvcore GFLOPS: {flops.total() / 1e9}')
+        # if args.metrics and utils.is_main_process() and epoch == 0:
+        #     print('testing for metrics A')
+        #     _img_size = args.input_size
+        #     _input = torch.tensor(
+        #         # np.random.sample([1, 3, _img_size, _img_size]),
+        #         np.ones(shape=[1, 3, _img_size, _img_size]) / 2,
+        #         dtype=torch.float32,
+        #         device='cuda',
+        #     )
+        #     model.train(True)
+        #     flops = FlopCountAnalysis(model, _input)
+        #     print(f'fvcore GFLOPS: {flops.total() / 1e9}')
             
-            param_count = sum([p.numel() for p in model_without_ddp.parameters() if p.requires_grad])
-            print(f"param_count: total[{param_count}]")
+        #     param_count = sum([p.numel() for p in model_without_ddp.parameters() if p.requires_grad])
+        #     print(f"param_count: total[{param_count}]")
             
-            _metrics = {
-                'gflops': float(flops.total() / 1e9),
-                'params': int(param_count),
-                # 'batch_size': args.batch_size,
-                # 'patch_size': config.MODEL.SWIN.PATCH_SIZE,
-                # 'd_model': config.MODEL.SWIN.EMBED_DIM,
-                # 'window_size': config.MODEL.SWIN.WINDOW_SIZE,
-                # 'image_size': _img_size,
-                # 'fish': 'pp',
-                # 'train': {k: _stat_train[k] for k in ['vram_gb', 'time_cost', 'time_cost_batch']},
-                # 'test': {k: _stat_val[k] for k in ['vram_gb', 'time_cost', 'time_cost_batch']},
-            }
-            if args.wandb:
-                for k, v in _metrics.items():
-                    wandb.run.summary[k] = v
-                _metrics.update(dict(wandb.run.summary))
+        #     _metrics = {
+        #         'gflops': float(flops.total() / 1e9),
+        #         'params': int(param_count),
+        #         # 'batch_size': args.batch_size,
+        #         # 'patch_size': config.MODEL.SWIN.PATCH_SIZE,
+        #         # 'd_model': config.MODEL.SWIN.EMBED_DIM,
+        #         # 'window_size': config.MODEL.SWIN.WINDOW_SIZE,
+        #         # 'image_size': _img_size,
+        #         # 'fish': 'pp',
+        #         # 'train': {k: _stat_train[k] for k in ['vram_gb', 'time_cost', 'time_cost_batch']},
+        #         # 'test': {k: _stat_val[k] for k in ['vram_gb', 'time_cost', 'time_cost_batch']},
+        #     }
+        #     if args.wandb:
+        #         for k, v in _metrics.items():
+        #             wandb.run.summary[k] = v
+        #         _metrics.update(dict(wandb.run.summary))
             
-            _fp = os.path.join(args.output_dir, 'metrics.json')
-            with open(_fp, 'w') as fo:
-                json.dump(_metrics, fo, indent=4)
+        #     _fp = os.path.join(args.output_dir, 'metrics.json')
+        #     with open(_fp, 'w') as fo:
+        #         json.dump(_metrics, fo, indent=4)
         
-        train_stats = train_one_epoch(
-            model, criterion, data_loader_train,
-            optimizer, device, epoch, loss_scaler,
-            args.clip_grad, model_ema, mixup_fn,
-            set_training_mode=args.finetune == '',  # keep in eval mode during finetuning
-            batch_limit=_batch_limit,
-            accumulation_steps=args.accumulation_steps,
-        )
+        if args.mode == 'train':
+            train_stats = train_one_epoch(
+                model, criterion, data_loader_train,
+                optimizer, device, epoch, loss_scaler,
+                args.clip_grad, model_ema, mixup_fn,
+                set_training_mode=args.finetune == '',  # keep in eval mode during finetuning
+                batch_limit=_batch_limit,
+                accumulation_steps=args.accumulation_steps,
+            )
+        _mem_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
         elapsed_time_epoch_train = time.time() - start_time_epoch
 
         lr_scheduler.step(epoch)
@@ -647,6 +601,7 @@ def main(args):
         test_stats = evaluate(data_loader_val, model, device,
             batch_limit=_batch_limit,
         )
+        _mem_gb_post_test = torch.cuda.max_memory_allocated() / (1024 ** 3)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         
         elapsed_time_epoch_test = time.time() - start_time_epoch - elapsed_time_epoch_train
@@ -667,56 +622,81 @@ def main(args):
                      'epoch': epoch,
                      'n_parameters': n_parameters}
         
-        if utils.is_main_process():
-            _mem_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
-            if args.metrics_only:
-                speed_train = _batch_limit * args.batch_size / elapsed_time_epoch_train
-                speed_test = _batch_limit * args.batch_size / elapsed_time_epoch_test
+        if utils.is_main_process() and args.metrics_only and epoch == 0:
+            _bs = args.batch_size
+            model.eval()
+            _img_size = args.input_size
+            _input = torch.tensor(
+                np.random.uniform(0.3, 0.7, [_bs, 3, args.input_size, args.input_size]),
+                dtype=torch.float32,
+                device='cuda',
+            )
+            flops = float(FlopCountAnalysis(model, _input).total())
+            
+            if _batch_limit is not None and _batch_limit > 0:
+                _sample_limit_train = _batch_limit * args.batch_size
+                _sample_limit_test = _batch_limit * args.batch_size
             else:
-                speed_train = 1_281_167 / elapsed_time_epoch_train
-                speed_test = 50_000 / elapsed_time_epoch_test
+                _sample_limit_train = 1_281_167
+                _sample_limit_test = 50_000
+            
+            speed_train = _sample_limit_train / max(elapsed_time_epoch_train, 0.000001)
+            speed_test = _sample_limit_test / max(elapsed_time_epoch_test, 0.000001)
+            
+            if args.mode != 'train':
+                speed_train = 0.0
+            
+            _gpu_count = utils.get_world_size()
+            assert _gpu_count == 1, 'metrics_only currently only support running on 1 GPU'
             
             _metrics = {
-                # 'train_mem_gb': float(_mem_gb),
-                'speed_train': float(speed_train / utils.get_world_size()),
-                'speed_test': float(speed_test / utils.get_world_size()),
+                'mode': args.mode,
+                'metrics_only': True,
+                'gflops': flops / 1e9,
+                'mem_gb_train': float(_mem_gb),
+                'mem_gb_train_test': float(_mem_gb_post_test),
+                'speed_train': float(speed_train / _gpu_count),
+                'speed_test': float(speed_test / _gpu_count),
             }
-            if args.metrics and epoch == 0:
-                if args.wandb:
-                    for k, v in _metrics.items():
-                        wandb.run.summary[k] = v
+            if args.wandb:
+                for k, v in _metrics.items():
+                    wandb.run.summary[k] = v
                 
-                _fp = os.path.join(args.output_dir, 'metrics.json')
+                wandb.finish()
+            
+            _fp = os.path.join(args.output_dir, f'metrics.json')
+            metrics_json = {}
+            if os.path.isfile(_fp):
                 with open(_fp, 'r') as fo:
                     metrics_json = json.load(fo)
-                metrics_json = {**metrics_json, **_metrics}
-                
-                with open(_fp, 'w') as fo:
-                    json.dump(metrics_json, fo, indent=4)
-                pass
+            metrics_json = {**metrics_json, **_metrics}
             
-            if args.wandb:
-                wandb_dict = {
-                    'epoch': epoch,
-                    **{f'train_{k}': v for k, v in train_stats.items()},
-                    **{f'test_{k}': v for k, v in test_stats.items()},
-                    'train_time_h': elapsed_time_epoch_train / 3600,
-                    'test_time_h': elapsed_time_epoch_test / 3600,
-                    'elapsed_time_h': elapsed_time / 3600,
-                    'train_mem_gb': float(_mem_gb),
-                    # 'speed_train': speed_train,
-                    # 'speed_test': speed_test,
-                    # **metrics,
-                }
-                wandb.run.summary['epoch'] = int(epoch)
-                wandb.run.summary['acc'] = float(max_accuracy)
-                wandb.run.summary['acc5'] = float(max_accuracy5)
-                wandb.log(wandb_dict)
-                print(f'[WandB]: {wandb_dict}')
-        
+            with open(_fp, 'w') as fo:
+                json.dump(metrics_json, fo, indent=4)
         if args.metrics_only:
             print(f'\nargs.metrics_only==True -> Exiting early\n')
             sys.exit()
+        
+        # if utils.is_main_process():
+        #     if args.wandb:
+        #         wandb_dict = {
+        #             'epoch': epoch,
+        #             **{f'train_{k}': v for k, v in train_stats.items()},
+        #             **{f'test_{k}': v for k, v in test_stats.items()},
+        #             'train_time_h': elapsed_time_epoch_train / 3600,
+        #             'test_time_h': elapsed_time_epoch_test / 3600,
+        #             'elapsed_time_h': elapsed_time / 3600,
+        #             'train_mem_gb': float(_mem_gb),
+        #             # 'speed_train': speed_train,
+        #             # 'speed_test': speed_test,
+        #             # **metrics,
+        #         }
+        #         wandb.run.summary['epoch'] = int(epoch)
+        #         wandb.run.summary['acc'] = float(max_accuracy)
+        #         wandb.run.summary['acc5'] = float(max_accuracy5)
+        #         wandb.log(wandb_dict)
+        #         print(f'[WandB]: {wandb_dict}')
+        
         
         # move model saving to after evaluation and logging
         
