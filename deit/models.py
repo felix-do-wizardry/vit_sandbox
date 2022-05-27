@@ -62,10 +62,10 @@ class DistilledVisionTransformer(VisionTransformer):
 
 
 # %%
-def get_deit_model(type=False, **kwargs):
-    if type in ['fiak', 'gmm']:
-        print(f'`models.get_deit_model` - using fiak with type[{type}]')
-        model = VisionTransformer_FiAK(type=type, **kwargs)
+def get_deit_model(attn_type=False, **kwargs):
+    if attn_type in ['fiak', 'gmm']:
+        print(f'`models.get_deit_model` - using fiak with attn_type[{attn_type}]')
+        model = VisionTransformer_FiAK(attn_type=attn_type, **kwargs)
     else:
         print('`models.get_deit_model` - using base')
         model = VisionTransformer(**kwargs)
@@ -74,10 +74,11 @@ def get_deit_model(type=False, **kwargs):
 
 
 # %%
+# custom tiny for fiak
 @register_model
 def deit_tiny_patch16_224(pretrained=False, **kwargs):
     model = get_deit_model(
-        patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
+        patch_size=16, embed_dim=192, depth=12, num_heads=4, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     model.default_cfg = _cfg()
     if pretrained:
@@ -90,14 +91,14 @@ def deit_tiny_patch16_224(pretrained=False, **kwargs):
 
 
 @register_model
-def deit_small_patch16_224(pretrained=False, **kwargs):
+def deit_tiny_patch8_224(pretrained=False, **kwargs):
     model = get_deit_model(
-        patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, qkv_bias=True,
+        patch_size=8, embed_dim=192, depth=12, num_heads=4, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     model.default_cfg = _cfg()
     if pretrained:
         checkpoint = torch.hub.load_state_dict_from_url(
-            url="https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth",
+            url="https://dl.fbaipublicfiles.com/deit/deit_tiny_patch16_224-a1311bcf.pth",
             map_location="cpu", check_hash=True
         )
         model.load_state_dict(checkpoint["model"])
@@ -105,18 +106,48 @@ def deit_small_patch16_224(pretrained=False, **kwargs):
 
 
 @register_model
-def deit_base_patch16_224(pretrained=False, **kwargs):
+def deit_tiny_patch4_224(pretrained=False, **kwargs):
     model = get_deit_model(
-        patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+        patch_size=4, embed_dim=192, depth=12, num_heads=4, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     model.default_cfg = _cfg()
     if pretrained:
         checkpoint = torch.hub.load_state_dict_from_url(
-            url="https://dl.fbaipublicfiles.com/deit/deit_base_patch16_224-b5f2ef4d.pth",
+            url="https://dl.fbaipublicfiles.com/deit/deit_tiny_patch16_224-a1311bcf.pth",
             map_location="cpu", check_hash=True
         )
         model.load_state_dict(checkpoint["model"])
     return model
+
+
+# @register_model
+# def deit_small_patch16_224(pretrained=False, **kwargs):
+#     model = get_deit_model(
+#         patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, qkv_bias=True,
+#         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     model.default_cfg = _cfg()
+#     if pretrained:
+#         checkpoint = torch.hub.load_state_dict_from_url(
+#             url="https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth",
+#             map_location="cpu", check_hash=True
+#         )
+#         model.load_state_dict(checkpoint["model"])
+#     return model
+
+
+# @register_model
+# def deit_base_patch16_224(pretrained=False, **kwargs):
+#     model = get_deit_model(
+#         patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+#         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     model.default_cfg = _cfg()
+#     if pretrained:
+#         checkpoint = torch.hub.load_state_dict_from_url(
+#             url="https://dl.fbaipublicfiles.com/deit/deit_base_patch16_224-b5f2ef4d.pth",
+#             map_location="cpu", check_hash=True
+#         )
+#         model.load_state_dict(checkpoint["model"])
+#     return model
 
 
 # @register_model

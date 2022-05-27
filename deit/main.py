@@ -34,7 +34,7 @@ from fvcore.nn import FlopCountAnalysis
 def get_args_parser():
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
     
-    parser.add_argument('--type', default='base', type=int, help='whether to use fiak/gmm, or baseline (set to any other str)')
+    parser.add_argument('--attn_type', default='base', type=str, help='whether to use fiak/gmm, or baseline (set to any other str)')
     parser.add_argument('--prune_total', default=0., type=float, help='how much to prune in total')
     parser.add_argument('--prune_k', default=0., type=float, help='how much to prune for K')
     
@@ -207,13 +207,23 @@ def main(args):
     _acml = max(1, args.accumulation_steps)
     _bs_eff = _acml * args.batch_size * utils.get_world_size()
     
+    # get patch_size from model name
+    assert '_patch' in args.model
+    patch_str = args.model[args.model.find('_patch') + 6 : ]
+    assert '_' in patch_str
+    patch_str = patch_str[:patch_str.find('_')]
+    _patch_size = int(patch_str)
+    assert _patch_size > 0
     
+    
+    _type_name = ''
+    if args.attn_type in ['fiak', 'gmm']:
+        _type_name = f'{args.attn_type}'
+        if args.mode != 'train':
+            _type_name = f'{_type_name}_{args.prune_total}_{args.prune_k}'
+    else:
+        _type_name = args.attn_type
     if not args.exp_name:
-        _type_name = ''
-        if args.type in ['fiak', 'gmm']:
-            _type_name = f'{args.type}'
-            if args.mode == 'metric':
-                _type_name = f'{_type_name}_{args.prune_total}_{args.prune_k}'
         args.exp_name = '_'.join([
             time_stamp,
             f'{model_name_short}',
@@ -237,7 +247,7 @@ def main(args):
     # print(f'process rank: utils[{utils.get_rank()}] args[{args.rank}]')
     
     if utils.is_main_process() and args.wandb:
-        _project = f'ImageNet_fishpp_deit'
+        _project = f'fiak_deit_metrics'
         wandb.init(
             project=_project,
             entity='fpt-team',
@@ -263,6 +273,11 @@ def main(args):
         wandb.run.summary['bs_eff'] = _bs_eff
         wandb.run.summary['gpu'] = utils.get_world_size()
         wandb.run.summary['image_size'] = args.input_size
+        
+        wandb.run.summary['patch_size'] = _patch_size
+        wandb.run.summary['prune_total'] = args.prune_total
+        wandb.run.summary['prune_k'] = args.prune_k
+        wandb.run.summary['N'] = int((args.input_size // _patch_size) ** 2 + 1)
         
         wandb.config.update(args)
         print(f"Initiated WandB project[{_project}] name[{args.exp_name}]")
@@ -343,7 +358,7 @@ def main(args):
         
         # metrics_test=args.metrics_test,
         mode=args.mode,
-        type=args.type,
+        attn_type=args.attn_type,
         use_gpytorch=False,
         prune_total=args.prune_total,
         prune_k=args.prune_k,
@@ -584,6 +599,8 @@ def main(args):
         #     with open(_fp, 'w') as fo:
         #         json.dump(_metrics, fo, indent=4)
         
+        time_start_train = time.perf_counter_ns()
+        train_stats = {}
         if args.mode == 'train':
             train_stats = train_one_epoch(
                 model, criterion, data_loader_train,
@@ -593,19 +610,22 @@ def main(args):
                 batch_limit=_batch_limit,
                 accumulation_steps=args.accumulation_steps,
             )
+        time_elapsed_train = (time.perf_counter_ns() - time_start_train) / 1e9
         _mem_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
-        elapsed_time_epoch_train = time.time() - start_time_epoch
+        # elapsed_time_epoch_train = time.time() - start_time_epoch
 
         lr_scheduler.step(epoch)
 
+        time_start_test = time.perf_counter_ns()
         test_stats = evaluate(data_loader_val, model, device,
             batch_limit=_batch_limit,
         )
+        time_elapsed_test = (time.perf_counter_ns() - time_start_test) / 1e9
         _mem_gb_post_test = torch.cuda.max_memory_allocated() / (1024 ** 3)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         
-        elapsed_time_epoch_test = time.time() - start_time_epoch - elapsed_time_epoch_train
-        elapsed_time = time.time() - start_time
+        # elapsed_time_epoch_test = time.time() - start_time_epoch - elapsed_time_epoch_train
+        # elapsed_time = time.time() - start_time
         
         if max_accuracy5 < test_stats["acc5"]:
             max_accuracy5 = test_stats["acc5"]
@@ -623,6 +643,9 @@ def main(args):
                      'n_parameters': n_parameters}
         
         if utils.is_main_process() and args.metrics_only and epoch == 0:
+            _gpu_count = utils.get_world_size()
+            assert _gpu_count == 1, 'metrics_only currently only support running on 1 GPU'
+            
             _bs = args.batch_size
             model.eval()
             _img_size = args.input_size
@@ -631,7 +654,7 @@ def main(args):
                 dtype=torch.float32,
                 device='cuda',
             )
-            flops = float(FlopCountAnalysis(model, _input).total())
+            flops = float(FlopCountAnalysis(model, _input).total()) / _bs
             
             if _batch_limit is not None and _batch_limit > 0:
                 _sample_limit_train = _batch_limit * args.batch_size
@@ -640,14 +663,13 @@ def main(args):
                 _sample_limit_train = 1_281_167
                 _sample_limit_test = 50_000
             
-            speed_train = _sample_limit_train / max(elapsed_time_epoch_train, 0.000001)
-            speed_test = _sample_limit_test / max(elapsed_time_epoch_test, 0.000001)
+            # speed_train = _sample_limit_train / max(elapsed_time_epoch_train, 0.000001)
+            # speed_test = _sample_limit_test / max(elapsed_time_epoch_test, 0.000001)
+            speed_train = _sample_limit_train / max(time_elapsed_train, 0.000001)
+            speed_test = _sample_limit_test / max(time_elapsed_test, 0.000001)
             
             if args.mode != 'train':
                 speed_train = 0.0
-            
-            _gpu_count = utils.get_world_size()
-            assert _gpu_count == 1, 'metrics_only currently only support running on 1 GPU'
             
             _metrics = {
                 'mode': args.mode,

@@ -182,7 +182,7 @@ class Attention(nn.Module):
 class Attention_FiAK_Base(nn.Module):
     def __init__(self,
                 dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.,
-                type='fiak',
+                attn_type='fiak',
                 seq_len=None,
                 use_gpytorch=False,
                 piNk=None,
@@ -204,8 +204,8 @@ class Attention_FiAK_Base(nn.Module):
         
         self.dist = self.get_dist_fn(use_gpytorch=use_gpytorch)
         
-        assert type in ['fiak', 'gmm']
-        self.type = type
+        assert attn_type in ['fiak', 'gmm']
+        self.attn_type = attn_type
         assert isinstance(seq_len, int) and seq_len > 0
         self.N = seq_len
         
@@ -214,9 +214,9 @@ class Attention_FiAK_Base(nn.Module):
         if piNk is None:
             piNk = seq_len
         
-        if type == 'fiak':
+        if attn_type == 'fiak':
             self.register_buffer('pi_mask', torch.ones(1, self.num_heads, piNq, piNk, dtype=torch.float32))
-        elif type == 'gmm':
+        elif attn_type == 'gmm':
             self.register_buffer('pi_mask', torch.ones(1, self.num_heads, 1, piNk, dtype=torch.float32))
     
     @classmethod
@@ -238,19 +238,19 @@ class Attention_FiAK_Base(nn.Module):
 class Attention_FiAK(Attention_FiAK_Base):
     def __init__(self,
                 dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.,
-                type='fiak',
+                attn_type='fiak',
                 seq_len=None,
                 **kwargs,
                 ):
         super().__init__(
             dim=dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=proj_drop,
-            type=type,
+            attn_type=attn_type,
             seq_len=seq_len,
             **kwargs
         )
         
         if DEBUG:
-            print(f'<Attention> [FiAK] type[{self.type}] N[{seq_len}] heads[{num_heads}]')
+            print(f'<Attention> [FiAK] attn_type[{self.attn_type}] N[{seq_len}] heads[{num_heads}]')
     
     def forward(self, x):
         B, N, C = x.shape
@@ -274,7 +274,7 @@ class Attention_FiAK(Attention_FiAK_Base):
 class Attention_FiAK_KQ(Attention_FiAK_Base):
     def __init__(self,
                 dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.,
-                type='fiak',
+                attn_type='fiak',
                 seq_len=None,
                 prune_total=0.0,
                 prune_k=0.0,
@@ -287,16 +287,17 @@ class Attention_FiAK_KQ(Attention_FiAK_Base):
         self.prune_total = prune_total
         self.prune_k = prune_k
         
-        self.Nk = int(np.floor(seq_len * (1 - prune_k)))
-        if self.type == 'fiak':
-            self.Nq = int(np.floor(seq_len**2 * (1 - prune_total) / self.Nk))
+        self.Nk = min(int(np.floor(seq_len * (1 - prune_k))), seq_len)
+        self.attn_type = attn_type
+        if self.attn_type == 'fiak':
+            self.Nq = min(int(np.floor(seq_len**2 * (1 - prune_total) / self.Nk)), seq_len)
             self.attn_pad = (0, 0, 0, seq_len - self.Nq)
         else:
             self.Nq = seq_len
         
         super().__init__(
             dim=dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=proj_drop,
-            type=type,
+            attn_type=attn_type,
             seq_len=seq_len,
             piNk=self.Nk,
             piNq=self.Nq,
@@ -304,7 +305,7 @@ class Attention_FiAK_KQ(Attention_FiAK_Base):
         )
         
         if DEBUG:
-            print(f'<Attention> [FiAK] [KQ] type[{self.type}] N[{self.N}] Nq[{self.Nq}] Nk[{self.Nk}] rA[{self.Nq*self.Nk/self.N**2:.3f}] heads[{num_heads}]')
+            print(f'<Attention> [FiAK] [KQ] attn_type[{self.attn_type}] N[{self.N}] Nq[{self.Nq}] Nk[{self.Nk}] rA[{self.Nq*self.Nk/self.N**2:.3f}] heads[{num_heads}]')
     
     def forward(self, x):
         B, N, C = x.shape
@@ -313,17 +314,17 @@ class Attention_FiAK_KQ(Attention_FiAK_Base):
         k = self.k(x_k).reshape(B, self.Nk, self.num_heads, -1).permute(0, 2, 1, 3)
         v = self.v(x_k).reshape(B, self.Nk, self.num_heads, -1).permute(0, 2, 1, 3)
         
-        if self.type == 'fiak':
+        if self.attn_type == 'fiak':
             q = q[:, :, : self.Nq]
         
         attn = -self.scale / 2. * self.dist(q, k)
         
-        if self.type == 'fiak':
-            attn = F.pad(attn, self.attn_pad, 'constant', 0)
-        
         attn = torch.exp(attn)
         attn = self.pi_mask * attn
         attn = attn / (attn.sum(dim=-1, keepdim=True) + 1e-6)
+        
+        if self.attn_type == 'fiak':
+            attn = F.pad(attn, self.attn_pad, 'constant', 0)
         
         attn = self.attn_drop(attn)
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
@@ -335,7 +336,7 @@ class Attention_FiAK_KQ(Attention_FiAK_Base):
 class Attention_FiAK_K(Attention_FiAK_Base):
     def __init__(self,
                 dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.,
-                type='fiak',
+                attn_type='fiak',
                 seq_len=None,
                 prune_total=0.0,
                 prune_k=0.0,
@@ -348,17 +349,17 @@ class Attention_FiAK_K(Attention_FiAK_Base):
         self.prune_total = prune_total
         self.prune_k = prune_k
         
-        self.Nk = int(np.floor(seq_len * (1 - prune_k)))
+        self.Nk = min(int(np.floor(seq_len * (1 - prune_k))), seq_len)
         
-        if self.type == 'fiak':
-            self.Nk2 = int(np.floor(self.N**2 * (1 - prune_total) / self.N))
+        if attn_type == 'fiak':
+            self.Nk2 = min(int(np.floor(seq_len**2 * (1 - prune_total) / seq_len)), self.Nk)
             self.attn_pad = (0, self.Nk - self.Nk2)
         else:
             self.Nk2 = self.Nk
         
         super().__init__(
             dim=dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=proj_drop,
-            type=type,
+            attn_type=attn_type,
             seq_len=seq_len,
             piNk=self.Nk2,
             piNq=seq_len,
@@ -366,7 +367,7 @@ class Attention_FiAK_K(Attention_FiAK_Base):
         )
         
         if DEBUG:
-            print(f'<Attention> [FiAK] [K] type[{self.type}] N[{self.N}] Nk[{self.Nk}] Nk2[{self.Nk2}] rA[{self.Nk2/self.N:.3f}] heads[{num_heads}]')
+            print(f'<Attention> [FiAK] [K] attn_type[{self.attn_type}] N[{self.N}] Nk[{self.Nk}] Nk2[{self.Nk2}] rA[{self.Nk2/self.N:.3f}] heads[{num_heads}]')
     
     def forward(self, x):
         B, N, C = x.shape
@@ -375,7 +376,7 @@ class Attention_FiAK_K(Attention_FiAK_Base):
         k = self.k(x_k).reshape(B, self.Nk, self.num_heads, -1).permute(0, 2, 1, 3)
         v = self.v(x_k).reshape(B, self.Nk, self.num_heads, -1).permute(0, 2, 1, 3)
         
-        if self.type == 'fiak':
+        if self.attn_type == 'fiak':
             k = k[:, :, : self.Nk2]
         
         attn = -self.scale / 2. * self.dist(q, k)
@@ -384,7 +385,71 @@ class Attention_FiAK_K(Attention_FiAK_Base):
         attn = self.pi_mask * attn
         attn = attn / (attn.sum(dim=-1, keepdim=True) + 1e-6)
         
-        if self.type == 'fiak':
+        if self.attn_type == 'fiak':
+            attn = F.pad(attn, self.attn_pad, 'constant', 0)
+        
+        attn = self.attn_drop(attn)
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+# %%
+class Attention_FiAK_MM(Attention_FiAK_Base):
+    def __init__(self,
+                dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.,
+                attn_type='fiak',
+                seq_len=None,
+                prune_total=0.0,
+                prune_k=0.0,
+                **kwargs,
+                ):
+        '''
+        Full K pruning - best for inference metrics?
+        '''
+        assert 0 <= prune_k <= prune_total < 1, f'prune_k[{prune_k}] or prune_total[{prune_total}] is invalid'
+        self.prune_total = prune_total
+        self.prune_k = prune_k
+        
+        self.Nk = min(int(np.floor(seq_len * (1 - prune_k))), seq_len)
+        
+        if attn_type == 'fiak':
+            self.Nk2 = min(int(np.floor(seq_len**2 * (1 - prune_total) / seq_len)), self.Nk)
+            self.attn_pad = (0, self.Nk - self.Nk2)
+        else:
+            self.Nk2 = self.Nk
+        
+        super().__init__(
+            dim=dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=proj_drop,
+            attn_type=attn_type,
+            seq_len=seq_len,
+            piNk=self.Nk2,
+            piNq=seq_len,
+            **kwargs
+        )
+        
+        if DEBUG:
+            print(f'<Attention> [FiAK] [MM] attn_type[{self.attn_type}] N[{self.N}] Nk[{self.Nk}] Nk2[{self.Nk2}] rA[{self.Nk2/self.N:.3f}] heads[{num_heads}]')
+    
+    def forward(self, x):
+        B, N, C = x.shape
+        x_k = x[:, : self.Nk]
+        q = self.q(x)  .reshape(B, N, self.num_heads, -1).permute(0, 2, 1, 3)
+        k = self.k(x_k).reshape(B, self.Nk, self.num_heads, -1).permute(0, 2, 1, 3)
+        v = self.v(x_k).reshape(B, self.Nk, self.num_heads, -1).permute(0, 2, 1, 3)
+        
+        if self.attn_type == 'fiak':
+            k = k[:, :, : self.Nk2]
+        
+        # attn = -self.scale / 2. * self.dist(q, k)
+        # MM uses matmul instead of dist
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        
+        attn = torch.exp(attn)
+        attn = self.pi_mask * attn
+        attn = attn / (attn.sum(dim=-1, keepdim=True) + 1e-6)
+        
+        if self.attn_type == 'fiak':
             attn = F.pad(attn, self.attn_pad, 'constant', 0)
         
         attn = self.attn_drop(attn)
@@ -410,6 +475,16 @@ class Block_FiAK(nn.Module):
             )
         elif mode == 'metric':
             self.attn = Attention_FiAK_KQ(
+                dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop,
+                **kwargs,
+            )
+        elif mode == 'metric_k':
+            self.attn = Attention_FiAK_K(
+                dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop,
+                **kwargs,
+            )
+        elif mode == 'metric_mm':
+            self.attn = Attention_FiAK_MM(
                 dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop,
                 **kwargs,
             )
@@ -483,12 +558,12 @@ class VisionTransformer_FiAK(nn.Module):
         self.token_grid_size = img_size / patch_size
         assert self.token_grid_size % 1 == 0
         self.token_grid_size = int(self.token_grid_size)
-        self.seq_len = int(self.token_grid_size ** 2)
+        self.seq_len = int(self.token_grid_size ** 2 + 1)
         
         print()
         print(f'<VIT> [FIAK]',
             f'mode[{mode}]',
-            f'type[{kwargs["type"]}]',
+            f'attn_type[{kwargs["attn_type"]}]',
             f't[{self.token_grid_size}]',
             f'N[{self.seq_len}]',
             f'depth[{depth}]',
