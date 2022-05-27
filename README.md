@@ -1,60 +1,158 @@
-# vit_sandbox
+# fiak_sandbox
 
-## FISH++
-Features/ideas:
-- uses 1 or few global heads
-- mixes attention matrix based on position pairs of QK
-- 
-### FISH++ DeiT
-Notes:
-- working dir: [deit](./deit)
-- added on 220216
+## FiAK Metrics
+> deit_tiny with 4 heads
 
-Baseline:
-- deit_base_patch16_224 - acc 81.8% / 95.6%
-- deit_small_patch16_224 - acc 79.9% / 95.0%
-- head = 12
-- batch_size = 256 x 4 = 1024
-
-Fish++:
-- global_head = 1
-- H_level = 2
-- mask_count = H_level + 1 = 3
-- pi projection: 3 -> 12
-- non-linear = True/False
-
-> deitS_p16_224_baseline_bs256x4
+> CONFIGS
 ```bash
-python -m torch.distributed.launch --nproc_per_node=4 --use_env main.py \
-    --model deit_small_patch16_224 \
-    --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 \
-    --output_dir /host/ubuntu/vision/fishpp \
-    --accumulation_steps 1
+data_path="/docker/code/data/imagenet2012"
+output_path="/docker/code/data/vision/fishsv"
+path="--data-path "$data_path" --output_dir "$output_path
+gpus="7"
+gpu_count=1
+_cuda="-m torch.distributed.launch --nproc_per_node="$gpu_count" --use_env --master_port"
+bs_test=256
+
+
+_model="--model deit_tiny_patch16_224 --metrics_only 1 --wandb 1"
+bs=256
+batch_limit=40
+
+
+_model="--model deit_tiny_patch8_224 --metrics_only 1 --wandb 1"
+bs=64
+batch_limit=40
+
+
+_model="--model deit_tiny_patch4_224 --metrics_only 1 --wandb 1"
+bs=4
+batch_limit=40
+
 ```
 
-> deitS_p16_224_fishpp_hl2_bs256x4
+> TRAIN: base + fiak + gmm
 ```bash
-CUDA_VISIBLE_DEVICES=2,3 python -m torch.distributed.launch --nproc_per_node=2 --use_env main.py \
-    --model deit_small_patch16_224 --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp \
-    --fishpp 1 --fish_global_heads 1 --fish_mask_type dist --fish_mask_levels 3 \
-    --fish_non_linear 0 --fish_non_linear_bias 0 --fish_global_full_proj 1
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12000 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode train --attn_type base
+
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12001 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode train --attn_type fiak
+
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12002 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode train --attn_type gmm
+
+
+
+# > METRIC: base + fiak_0.7_0.2 + fiak_0.7_0.7 + gmm_0.3_0.3
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12101 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode metric --attn_type base
+
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12101 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode metric --attn_type fiak --prune_total 0.7 --prune_k 0.2
+
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12102 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode metric --attn_type fiak --prune_total 0.7 --prune_k 0.7
+
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12102 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode metric --attn_type gmm --prune_total 0.3 --prune_k 0.3
+
+
+
+# > METRIC_K: base + fiak_0.7_0.2 + fiak_0.7_0.7 + gmm_0.3_0.3
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12201 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode metric_k --attn_type fiak --prune_total 0.7 --prune_k 0.2
+
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12202 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode metric_k --attn_type fiak --prune_total 0.7 --prune_k 0.7
+
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12202 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode metric_k --attn_type gmm --prune_total 0.3 --prune_k 0.3
+
+
+# > METRIC_MM: base + fiak_0.7_0.2 + fiak_0.7_0.7 + gmm_0.3_0.3
+# (matmul instead of dist for fiak and gmm)
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12301 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode metric_mm --attn_type fiak --prune_total 0.7 --prune_k 0.2
+
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12302 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode metric_mm --attn_type fiak --prune_total 0.7 --prune_k 0.7
+
+CUDA_VISIBLE_DEVICES=$gpus python $_cuda 12302 main.py \
+    $path $_model --batch_limit $batch_limit --batch-size $bs \
+    --mode metric_mm --attn_type gmm --prune_total 0.3 --prune_k 0.3
+
 ```
 
 
 
-# ACCUMULATION
-```
-echo METRICS tiny baseline 256
-python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 12347 main.py \
-    --model deit_tiny_patch16_224 --batch-size 64 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp_temp \
-    --batch_limit 100 --accumulation_steps 4
 
-python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 12347 main.py \
-    --model deit_tiny_patch16_224 --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 --output_dir /host/ubuntu/vision/fishpp_temp \
-    --batch_limit 100 --accumulation_steps 0
+
+
+
+
+
+
+
+
+
+
+
+> TRAIN: base + fiak_0.5_0.2
+```bash
+CUDA_VISIBLE_DEVICES=6 python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 12000 main.py \
+    --data-path /docker/code/data/imagenet2012 --output_dir /docker/code/data/vision/fiak \
+    --model deit_tiny_patch16_224 --metrics_only 1 --wandb 1 \
+    --batch_limit 40 --batch-size 256 --mode train \
+    --attn_type base
+
+CUDA_VISIBLE_DEVICES=6 python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 12001 main.py \
+    --data-path /docker/code/data/imagenet2012 --output_dir /docker/code/data/vision/fiak \
+    --model deit_tiny_patch16_224 --metrics_only 1 --wandb 1 \
+    --batch_limit 40 --batch-size 256 --mode train \
+    --attn_type fiak --prune_total 0.5 --prune_k 0.2
+
+```
+
+> METRIC: base + fiak_0.5_0.2
+```bash
+CUDA_VISIBLE_DEVICES=6 python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 13000 main.py \
+    --data-path /docker/code/data/imagenet2012 --output_dir /docker/code/data/vision/fiak \
+    --model deit_tiny_patch16_224 --metrics_only 1 --wandb 1 \
+    --batch_limit 40 --batch-size 256 --mode metric \
+    --attn_type base
+
+CUDA_VISIBLE_DEVICES=6 python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 13001 main.py \
+    --data-path /docker/code/data/imagenet2012 --output_dir /docker/code/data/vision/fiak \
+    --model deit_tiny_patch16_224 --metrics_only 1 --wandb 1 \
+    --batch_limit 40 --batch-size 256 --mode metric \
+    --attn_type fiak --prune_total 0.5 --prune_k 0.2
+
+```
+
+> METRIC_K: base + fiak_0.5_0.2
+```bash
+CUDA_VISIBLE_DEVICES=6 python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 13000 main.py \
+    --data-path /docker/code/data/imagenet2012 --output_dir /docker/code/data/vision/fiak \
+    --model deit_tiny_patch16_224 --metrics_only 1 --wandb 1 \
+    --batch_limit 40 --batch-size 256 --mode metric_k \
+    --attn_type base
+
+CUDA_VISIBLE_DEVICES=6 python -m torch.distributed.launch --nproc_per_node=1 --use_env --master_port 13001 main.py \
+    --data-path /docker/code/data/imagenet2012 --output_dir /docker/code/data/vision/fiak \
+    --model deit_tiny_patch16_224 --metrics_only 1 --wandb 1 \
+    --batch_limit 40 --batch-size 256 --mode metric_k \
+    --attn_type fiak --prune_total 0.5 --prune_k 0.2
 
 ```
