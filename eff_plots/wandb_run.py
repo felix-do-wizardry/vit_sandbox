@@ -183,28 +183,28 @@ df_ratio = pd.DataFrame(data_ratio)
 df_ratio
 
 # %% 1
-fig = fig_clean(px.line(
-    df_ratio.sort_values(['type']),
-    x='type',
-    # y=['mem_gb_train_test'],
-    # y=['gflops'],
-    y=['speed_test'],
+# fig = fig_clean(px.line(
+#     df_ratio.sort_values(['type']),
+#     x='type',
+#     # y=['mem_gb_train_test'],
+#     # y=['gflops'],
+#     y=['speed_test'],
     
-    color='mode',
-    line_dash='N',
-    # line_dash='mode',
-    # color='N',
+#     color='mode',
+#     line_dash='N',
+#     # line_dash='mode',
+#     # color='N',
     
-)).update_layout(
-    # title="Plot Title",
-    # xaxis_title="X Axis Title",
-    # yaxis_title='test memory ratio (lower=better)',
-    # yaxis_title='test flops ratio (lower=better)',
-    yaxis_title='test speed ratio (higher=better)',
-    # legend_title="Legend Title",
-)
-fig.show()
-# fig.write_image('plots/')
+# )).update_layout(
+#     # title="Plot Title",
+#     # xaxis_title="X Axis Title",
+#     # yaxis_title='test memory ratio (lower=better)',
+#     # yaxis_title='test flops ratio (lower=better)',
+#     yaxis_title='test speed ratio (higher=better)',
+#     # legend_title="Legend Title",
+# )
+# fig.show()
+# # fig.write_image('plots/')
 
 # %% 2
 plot_configs = {
@@ -236,9 +236,72 @@ for k, v in plot_configs.items():
         # legend_title="Legend Title",
     )
     fig.show()
-    fig.write_image(f'plots/ratio_mode_{k}.png')
+    fig.write_image(f'plots/test_ratio_mode_{k}.png')
 
 # %%
-# runs_df.to_csv("project.csv")
+
+
+
+
+
+# %% TRAIN
+# df2[(df2['type'] == 'base') & (df2['mode'] == 'metric')]
+data_ratio = []
+for _N in [197, 785]:
+    _df = df2[(df2['mode'] == 'train') & (df2['N'] == _N)]
+    d_base = df2[(df2['type'] == 'base') & (
+        df2['mode'] == 'train') & (
+        (df2['N'] == _N)
+        )].to_dict('records')[0]
+    _data_ratio = [
+        {
+            **d,
+            # 'speed_test': d['speed_test'] / d_base['speed_test'],
+            **{
+                k: d[k] / d_base[k]
+                for k in ['speed_test', 'gflops', 'mem_gb_train_test']
+            },
+        }
+        for d in _df.to_dict('records')
+    ]
+    data_ratio.extend(_data_ratio)
+
+df_ratio_train = pd.DataFrame(data_ratio)
+df_ratio_train
+
+# %% 2
+plot_configs = {
+    'mem_gb_train': 'train memory ratio (lower=better)',
+    # 'mem_gb_train_test': 'test memory ratio (lower=better)',
+    # 'gflops': 'test flops ratio (lower=better)',
+    'speed_train': 'train speed ratio (higher=better)',
+}
+for k, v in plot_configs.items():
+    fig = fig_clean(px.line(
+        df_ratio_train.sort_values(['N']),
+        x='N',
+        y=k,
+        # y=['mem_gb_train_test'],
+        # y=['gflops'],
+        # y=['speed_test'],
+        
+        color='type',
+        # line_dash='N',
+        # line_dash='mode',
+        # color='N',
+        # size=[8] * df_ratio_train.shape[0],
+        
+    )).update_layout(
+        # title="Plot Title",
+        # xaxis_title="X Axis Title",
+        yaxis_title=v,
+        # yaxis_title='test memory ratio (lower=better)',
+        # yaxis_title='test flops ratio (lower=better)',
+        # yaxis_title='test speed ratio (higher=better)',
+        # legend_title="Legend Title",
+    )
+    fig.show()
+    fig.write_image(f'plots/train_ratio_N_{k}.png')
+
 
 # %%
