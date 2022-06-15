@@ -1,11 +1,12 @@
 
 # 
-python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
-    --model deit_small_patch16_224 \
-    --batch-size 256 \
-    --data-path /host/ubuntu/data/imagenet2012 \
-    --output_dir /host/ubuntu/vision/fishpp \
-    --accumulation_steps 4
+# python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
+#     --model deit_small_patch16_224 \
+#     --batch-size 256 \
+#     --data-path /host/ubuntu/data/imagenet2012 \
+#     --output_dir /host/ubuntu/vision/fishpp \
+#     --accumulation_steps 4
+
 
 
 
@@ -99,6 +100,17 @@ CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=1 --u
     --fish_non_linear 0 --fish_non_linear_bias 0 \
     --fish_cls_token_type sum --fish_cls_token_pos 0.5 \
     --fish_global_proj_type mix --fish_layer_limit 8
+
+
+
+
+
+
+
+
+
+
+
 
 
 

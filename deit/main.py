@@ -217,7 +217,8 @@ def main(args):
         'deit_small', 'deitS').replace(
         'deit_tiny', 'deitT').replace(
         '_patch', '_p')
-    _acml = max(1, args.accumulation_steps)
+    args.accumulation_steps = max(1, int(args.accumulation_steps))
+    _acml = args.accumulation_steps
     _bs_eff = _acml * args.batch_size * utils.get_world_size()
     # bs_dict = {
     #     'per_gpu': args.batch_size,
@@ -264,7 +265,7 @@ def main(args):
         args.output_dir = os.path.join(args.output_dir, args.exp_name)
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     
-    print(args)
+    # print(args)
     
     print(f'timestamp[{time_stamp}]')
     print(f'exp[{args.exp_name}]')
@@ -454,7 +455,7 @@ def main(args):
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
 
-    linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size() / 512.0
+    linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size() * args.accumulation_steps / 512.0
     args.lr = linear_scaled_lr
     optimizer = create_optimizer(args, model_without_ddp)
     

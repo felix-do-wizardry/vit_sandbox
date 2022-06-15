@@ -90,7 +90,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
                 with_step_update=True,
             )
         else:
-            loss = loss / accumulation_steps
+            # loss = loss / accumulation_steps
             if _index % accumulation_steps == 0:
                 # first step of accumulation
                 optimizer.zero_grad()
